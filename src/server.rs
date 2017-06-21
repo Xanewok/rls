@@ -55,6 +55,7 @@ pub enum Notification {
     DidChangeTextDocument(DidChangeTextDocumentParams),
     DidOpenTextDocument(DidOpenTextDocumentParams),
     DidSaveTextDocument(DidSaveTextDocumentParams),
+    ShowMessage(ShowMessageParams),
 }
 
 /// Creates an public enum whose variants all contain a single serializable payload
@@ -155,12 +156,10 @@ macro_rules! messages {
 
         // Helper macro that's used to replace optional enum payload with a given tree,
         // allows to give an arbitrary identifier to payload (or `_`) instead of a type.
-        #[cfg(test)]
         macro_rules! expand_into {
             ($tt: ty => $target: tt) => ($target)
         }
 
-        #[cfg(test)]
         macro_rules! expand_into_ref {
             ($tt: tt => $target: tt) => (ref $target)
         }
@@ -194,7 +193,6 @@ macro_rules! messages {
 
             // Returns a JSON-RPC string representing given message.
             // Effectively an inverse of `parse_message` function.
-            #[cfg(test)]
             pub fn to_message_str(&self) -> String {
                 match self {
                     &ServerMessage::Request(ref request) => {
@@ -256,6 +254,7 @@ messages! {
         "textDocument/didOpen" => DidOpenTextDocument(DidOpenTextDocumentParams);
         "textDocument/didSave" => DidSaveTextDocument(DidSaveTextDocumentParams);
         "$/cancelRequest" => Cancel(CancelParams);
+        "window/showMessage" => ShowMessage(ShowMessageParams);
     }
     // TODO handle me
     "$/setTraceNotification" => Err(ParseError::new(ErrorKind::InvalidData, "setTraceNotification", None));
@@ -388,6 +387,11 @@ impl LsService {
                                     action!(args: { $($notif_arg)* }; $($notif_action)*);
                                 }
                             ),*
+                            _ => {
+                                // TODO: It'd be good to contain message direction/flow in
+                                // type system (i.e. server shouldn't ever handle/parse client messages)
+                                trace!("Received {:?} which server doesn't handle (presumable a message intended for client?)", notification);
+                            }
                         }
                     },
                     Err(e) => {

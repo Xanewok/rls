@@ -26,7 +26,7 @@ use Span;
 use build::*;
 use self::change_queue::ChangeQueue;
 use lsp_data::*;
-use server::{ResponseData, Output, Ack};
+use server::{ResponseData, Output, Ack, ServerMessage};
 
 use std::collections::HashMap;
 use std::panic;
@@ -137,8 +137,16 @@ impl ActionHandler {
         debug!("build {:?}", project_path);
         let result = self.build_queue.request_build(project_path, priority);
         match result {
-            BuildResult::Success(x, analysis) | BuildResult::Failure(x, analysis) => {
+            BuildResult::Success(x, analysis, notifications) |
+            BuildResult::Failure(x, analysis, notifications) => {
                 debug!("build - Success");
+
+                // Show users notifications from builds (such as wrong config) if there are any
+                for notification in notifications {
+                    let notification = ServerMessage::Notification(notification);
+                    // TODO Use to_message_str() to fix #43 below
+                    out.response(notification.to_message_str());
+                }
 
                 // These notifications will include empty sets of errors for files
                 // which had errors, but now don't. This instructs the IDE to clear
@@ -164,18 +172,22 @@ impl ActionHandler {
                 } else {
                     self.analysis.reload(project_path, &cwd, false).unwrap();
                 }
-
-                out.notify("rustDocument/diagnosticsEnd");
             }
             BuildResult::Squashed => {
                 trace!("build - Squashed");
-                out.notify("rustDocument/diagnosticsEnd");
             },
-            BuildResult::Err => {
+            BuildResult::Err(notifications) => {
                 trace!("build - Error");
-                out.notify("rustDocument/diagnosticsEnd");
+
+                for notification in notifications {
+                    let notification = ServerMessage::Notification(notification);
+                    // TODO Use to_message_str() to fix #43 below
+                    out.response(notification.to_message_str());
+                }
             },
         }
+
+        out.notify("rustDocument/diagnosticsEnd");
     }
 
     pub fn on_open(&self, open: DidOpenTextDocumentParams, out: &Output) {

@@ -33,6 +33,8 @@ use self::syntax::ast;
 use self::syntax::codemap::{FileLoader, RealFileLoader};
 
 use config::Config;
+use server::Notification;
+use ls_types::{ShowMessageParams, MessageType};
 
 use std::collections::{HashMap, BTreeMap};
 use std::env;
@@ -85,14 +87,14 @@ pub struct BuildQueue {
 
 #[derive(Debug)]
 pub enum BuildResult {
-    // Build was succesful, argument is warnings.
-    Success(Vec<String>, Option<Analysis>),
-    // Build finished with errors, argument is errors and warnings.
-    Failure(Vec<String>, Option<Analysis>),
+    // Build was succesful, argument is warnings and optional notifications for client.
+    Success(Vec<String>, Option<Analysis>, Vec<Notification>),
+    // Build finished with errors, argument is errors, warnings and notifications for client.
+    Failure(Vec<String>, Option<Analysis>, Vec<Notification>),
     // Build was coelesced with another build.
     Squashed,
     // There was an error attempting to build.
-    Err,
+    Err(Vec<Notification>),
 }
 
 /// Priority for a build request.
@@ -252,16 +254,38 @@ impl BuildQueue {
         let build_dir = &self.build_dir.lock().unwrap();
         let build_dir = build_dir.as_ref().unwrap();
 
+        let mut notifications = vec![];
+
         if needs_to_run_cargo {
-            if let BuildResult::Err = self.cargo(build_dir.clone()) {
-                return BuildResult::Err;
+            let result = self.cargo(build_dir.clone());
+            // FIXME: This is temporary until cargo() can run complete analysis
+            // with diagnostics on its own. Until then, we might need to catch
+            // notifications (such as bad target) and return it with rustc() results.
+            match result {
+                err @ BuildResult::Err(_) => { return err; }
+                BuildResult::Success(_, _, notifs) |
+                BuildResult::Failure(_, _, notifs) => {
+                    notifications = notifs;
+                }
+                BuildResult::Squashed => {}
             }
         }
 
         let cmd_line_args = self.cmd_line_args.lock().unwrap();
         assert!(!cmd_line_args.is_empty());
         let cmd_line_envs = self.cmd_line_envs.lock().unwrap();
-        self.rustc(&*cmd_line_args, &*cmd_line_envs, build_dir)
+
+        let mut result = self.rustc(&*cmd_line_args, &*cmd_line_envs, build_dir);
+        match result {
+            BuildResult::Success(_, _, ref mut notifs) |
+            BuildResult::Failure(_, _, ref mut notifs) => {
+                notifications.append(notifs);
+                *notifs = notifications;
+            }
+            _ => {}
+        }
+
+        result
     }
 
     // Runs an in-process instance of Cargo.
@@ -423,6 +447,8 @@ impl BuildQueue {
         let out = Arc::new(Mutex::new(vec![]));
         let out_clone = out.clone();
 
+        let notifs = Arc::new(Mutex::new(vec![]));
+        let notifs_clone = notifs.clone();
         // Cargo may or may not spawn threads to run the various builds, since
         // we may be in separate threads we need to block and wait our thread.
         // However, if Cargo doesn't run a separate thread, then we'll just wait
@@ -448,6 +474,12 @@ impl BuildQueue {
             trace!("manifest_path: {:?}", manifest_path);
             let ws = Workspace::new(&manifest_path, &config).expect("could not create cargo workspace");
 
+            // TODO: Add meaningful messages when parsing config
+            notifs_clone.lock().unwrap().push(Notification::ShowMessage(ShowMessageParams {
+                typ: MessageType::Info,
+                message: String::from("Cargo finished running!")
+            }));
+
             let mut opts = CompileOptions::default(&config, CompileMode::Check);
             if rls_config.build_lib {
                 opts.filter = CompileFilter::new(true, &[], false, &[], false, &[], false, &[], false);
@@ -457,12 +489,14 @@ impl BuildQueue {
             }
             compile_with_exec(&ws, &opts, Arc::new(exec)).expect("could not run cargo");
         });
+        let result = handle.join();
+        let notifications = Arc::try_unwrap(notifs).unwrap().into_inner().unwrap();
 
-        match handle.join() {
-            Ok(_) => BuildResult::Success(vec![], None),
+        match result {
+            Ok(_) => BuildResult::Success(vec![], None, notifications),
             Err(_) => {
                 info!("cargo stdout {}", String::from_utf8(out_clone.lock().unwrap().to_owned()).unwrap());
-                BuildResult::Err
+                BuildResult::Err(notifications)
             }
         }
     }
@@ -501,8 +535,8 @@ impl BuildQueue {
 
         let analysis = analysis.lock().unwrap().clone();
         return match exit_code {
-            Ok(0) => BuildResult::Success(stderr_json_msg, analysis),
-            _ => BuildResult::Failure(stderr_json_msg, analysis),
+            Ok(0) => BuildResult::Success(stderr_json_msg, analysis, vec![]),
+            _ => BuildResult::Failure(stderr_json_msg, analysis, vec![]),
         };
 
         // Our compiler controller. We mostly delegate to the default rustc
