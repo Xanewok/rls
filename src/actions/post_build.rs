@@ -12,7 +12,6 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::marker::PhantomData;
 
 use build::BuildResult;
 use lsp_data::{ls_util, PublishDiagnosticsParams};
@@ -42,10 +41,7 @@ pub struct PostBuildHandler<O: Output> {
 
 impl<O: Output> PostBuildHandler<O> {
     pub fn handle(self, result: BuildResult) {
-        self.out.notify(Notification::<DiagnosticsBegin> {
-            params: NoParams {},
-            _action: PhantomData,
-        });
+        self.out.notify(Notification::<DiagnosticsBegin>::new(NoParams {}));
 
         match result {
             BuildResult::Success(messages, new_analysis)
@@ -64,25 +60,16 @@ impl<O: Output> PostBuildHandler<O> {
                         self.reload_analysis_from_memory(new_analysis);
                     }
 
-                    self.out.notify(Notification::<DiagnosticsEnd> {
-                    params: NoParams {},
-                    _action: PhantomData,
-                });
+                    self.out.notify(Notification::<DiagnosticsEnd>::new(NoParams{}));
                 });
             }
             BuildResult::Squashed => {
                 trace!("build - Squashed");
-                self.out.notify(Notification::<DiagnosticsEnd> {
-                    params: NoParams {},
-                    _action: PhantomData,
-                });
+                self.out.notify(Notification::<DiagnosticsEnd>::new(NoParams{}));
             }
             BuildResult::Err => {
                 trace!("build - Error");
-                self.out.notify(Notification::<DiagnosticsEnd> {
-                    params: NoParams {},
-                    _action: PhantomData,
-                });
+                self.out.notify(Notification::<DiagnosticsEnd>::new(NoParams{}));
             }
         }
     }
@@ -259,9 +246,6 @@ fn emit_notifications<O: Output>(build_results: &BuildResults, show_warnings: bo
                 .collect(),
         };
 
-        out.notify(Notification::<PublishDiagnostics> {
-            params,
-            _action: PhantomData
-        });
+        out.notify(Notification::<PublishDiagnostics>::new(params));
     }
 }
