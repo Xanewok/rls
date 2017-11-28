@@ -21,7 +21,7 @@ use Span;
 
 use build::*;
 use lsp_data::*;
-use server::{Action, BlockingNotificationAction, LsState, NoParams, Output};
+use server::{Action, BlockingNotificationAction, LsState, Output};
 
 use std::thread;
 
@@ -30,7 +30,7 @@ use std::thread;
 pub struct Initialized;
 
 impl Action for Initialized {
-    type Params = NoParams;
+    type Params = ();
     const METHOD: &'static str = "initialized";
 }
 
@@ -395,7 +395,7 @@ impl Action for ShowMessage {
 pub struct DiagnosticsBegin;
 
 impl Action for DiagnosticsBegin {
-    type Params = NoParams;
+    type Params = ();
     const METHOD: &'static str = "rustDocument/diagnosticsBegin";
 }
 
@@ -408,7 +408,7 @@ impl Action for DiagnosticsBegin {
 pub struct DiagnosticsEnd;
 
 impl Action for DiagnosticsEnd {
-    type Params = NoParams;
+    type Params = ();
     const METHOD: &'static str = "rustDocument/diagnosticsEnd";
 }
 
@@ -417,6 +417,6 @@ impl Action for DiagnosticsEnd {
 pub struct BeginBuild;
 
 impl Action for BeginBuild {
-    type Params = NoParams;
+    type Params = ();
     const METHOD: &'static str = "rustDocument/beginBuild";
 }

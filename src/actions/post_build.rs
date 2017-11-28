@@ -16,7 +16,7 @@ use std::thread;
 use build::BuildResult;
 use lsp_data::{ls_util, PublishDiagnosticsParams};
 use actions::notifications::{DiagnosticsBegin, DiagnosticsEnd, PublishDiagnostics};
-use server::{Notification, Output, NoParams};
+use server::{Notification, Output};
 use CRATE_BLACKLIST;
 use Span;
 
@@ -41,7 +41,7 @@ pub struct PostBuildHandler<O: Output> {
 
 impl<O: Output> PostBuildHandler<O> {
     pub fn handle(self, result: BuildResult) {
-        self.out.notify(Notification::<DiagnosticsBegin>::new(NoParams {}));
+        self.out.notify(Notification::<DiagnosticsBegin>::new(()));
 
         match result {
             BuildResult::Success(messages, new_analysis)
@@ -60,16 +60,16 @@ impl<O: Output> PostBuildHandler<O> {
                         self.reload_analysis_from_memory(new_analysis);
                     }
 
-                    self.out.notify(Notification::<DiagnosticsEnd>::new(NoParams{}));
+                    self.out.notify(Notification::<DiagnosticsEnd>::new(()));
                 });
             }
             BuildResult::Squashed => {
                 trace!("build - Squashed");
-                self.out.notify(Notification::<DiagnosticsEnd>::new(NoParams{}));
+                self.out.notify(Notification::<DiagnosticsEnd>::new(()));
             }
             BuildResult::Err => {
                 trace!("build - Error");
-                self.out.notify(Notification::<DiagnosticsEnd>::new(NoParams{}));
+                self.out.notify(Notification::<DiagnosticsEnd>::new(()));
             }
         }
     }

@@ -16,7 +16,7 @@ mod harness;
 use analysis;
 use actions::requests;
 use config::{Config, Inferrable};
-use server::{self as ls_server, NoParams, Request, ShutdownRequest};
+use server::{self as ls_server, Request, ShutdownRequest};
 use jsonrpc_core;
 use vfs;
 
@@ -95,7 +95,7 @@ fn test_shutdown() {
 
     let messages = vec![
         initialize(0, root_path.as_os_str().to_str().map(|x| x.to_owned())).to_string(),
-        blocking_request::<ShutdownRequest>(1, NoParams).to_string(),
+        blocking_request::<ShutdownRequest>(1, ()).to_string(),
     ];
 
     let (mut server, results) = env.mock_server(messages);

@@ -15,7 +15,7 @@
 use actions::requests;
 use analysis::{AnalysisHost, Target};
 use config::Config;
-use server::{self, LsService, NoParams, Notification, Request};
+use server::{self, LsService, Notification, Request};
 use vfs::Vfs;
 
 use ls_types::{ClientCapabilities, DocumentFormattingParams, DocumentRangeFormattingParams,
@@ -283,7 +283,7 @@ fn range_format(
 fn shutdown<'a>() -> Request<server::ShutdownRequest<'a>> {
     Request {
         id: next_id(),
-        params: NoParams {},
+        params: (),
         received: Instant::now(),
         _action: PhantomData,
     }
@@ -291,7 +291,7 @@ fn shutdown<'a>() -> Request<server::ShutdownRequest<'a>> {
 
 fn exit<'a>() -> Notification<server::ExitNotification<'a>> {
     Notification {
-        params: NoParams {},
+        params: () ,
         _action: PhantomData,
     }
 }

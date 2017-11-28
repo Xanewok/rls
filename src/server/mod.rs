@@ -60,19 +60,6 @@ pub struct Ack;
 #[derive(Debug)]
 pub struct NoResponse;
 
-/// Empty extra parameters to some request or notification.
-#[derive(Debug, Serialize, PartialEq)]
-pub struct NoParams;
-
-impl<'de> Deserialize<'de> for NoParams {
-    fn deserialize<D>(_deserializer: D) -> Result<NoParams, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        Ok(NoParams)
-    }
-}
-
 /// A response to some request.
 pub trait Response {
     /// Send the response along the given output.
@@ -236,7 +223,7 @@ pub struct ShutdownRequest<'a> {
 }
 
 impl<'a> Action for ShutdownRequest<'a> {
-    type Params = NoParams;
+    type Params = ();
     const METHOD: &'static str = "shutdown";
 }
 
@@ -266,7 +253,7 @@ pub struct ExitNotification<'a> {
 }
 
 impl<'a> Action for ExitNotification<'a> {
-    type Params = NoParams;
+    type Params = ();
     const METHOD: &'static str = "exit";
 }
 
@@ -688,7 +675,7 @@ mod test {
 
         assert_eq!(
             notification,
-            Ok(Notification::<notifications::Initialized>::new(NoParams {}))
+            Ok(Notification::<notifications::Initialized>::new(()))
         );
     }
 }

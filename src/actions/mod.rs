@@ -23,7 +23,7 @@ use actions::post_build::{BuildResults, PostBuildHandler};
 use actions::notifications::BeginBuild;
 use build::*;
 use lsp_data::*;
-use server::{Output, Notification, NoParams};
+use server::{Output, Notification};
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -195,7 +195,7 @@ impl InitActionContext {
             }
         };
 
-        out.notify(Notification::<BeginBuild>::new(NoParams {}));
+        out.notify(Notification::<BeginBuild>::new(()));
         self.build_queue
             .request_build(project_path, priority, move |result| pbh.handle(result));
     }
