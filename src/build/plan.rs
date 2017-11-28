@@ -361,8 +361,7 @@ impl JobQueue {
                 internals.config.clone(),
                 internals.env_lock.as_facade(),
             ) {
-                BuildResult::Success(mut messages, mut analysis)
-                | BuildResult::Failure(mut messages, mut analysis) => {
+                BuildResult::Success(mut messages, mut analysis) => {
                     compiler_messages.append(&mut messages);
                     analyses.append(&mut analysis);
                 }
@@ -370,7 +369,7 @@ impl JobQueue {
                 _ => {}
             }
         }
-        // TODO: Should we combine with ::Failure? What's the difference between those two?
+
         return BuildResult::Success(compiler_messages, analyses);
     }
 }
