@@ -68,7 +68,7 @@ pub fn parse_diagnostics(
     cwd: &Path,
     related_information_support: bool,
 ) -> Option<ParsedDiagnostics> {
-    let message = match serde_json::from_str::<CompilerMessage>(message) {
+    let mut message = match serde_json::from_str::<CompilerMessage>(message) {
         Ok(m) => m,
         Err(e) => {
             debug!("build error {:?}", e);
@@ -81,6 +81,17 @@ pub fn parse_diagnostics(
     // information, like "aborting due to X previous errors".
     if message.spans.is_empty() {
         return None;
+    }
+
+    // Single labelless children spans often mean to logically use children message
+    // as their label. Since we're processing only labeled spans here, be sure to
+    // also include the children message as their 'label' in this case.
+    for associated in &mut message.children.iter_mut().filter(|c| c.spans.len() == 1) {
+        for span in &mut associated.spans {
+            if span.label.is_none() {
+                span.label = Some(associated.message.clone());
+            }
+        }
     }
 
     // A single compiler message can consist of multiple primary spans, each
