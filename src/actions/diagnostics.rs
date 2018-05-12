@@ -227,7 +227,7 @@ fn make_related_information<'a>(
     spans: impl Iterator<Item = &'a DiagnosticSpan>,
     cwd: &Path,
 ) -> Vec<DiagnosticRelatedInformation> {
-    let mut related_information: Vec<DiagnosticRelatedInformation> = spans
+    spans
         .filter_map(|span| {
             let rls_span = span.rls_span().zero_indexed();
 
@@ -241,11 +241,7 @@ fn make_related_information<'a>(
                     message: label.trim().to_owned(),
                 })
         })
-        .collect();
-
-    related_information.sort_by_key(|info| info.location.range.start);
-
-    related_information
+        .collect()
 }
 
 fn make_suggestions<'a>(
