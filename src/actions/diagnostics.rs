@@ -68,7 +68,7 @@ pub fn parse_diagnostics(
     cwd: &Path,
     related_information_support: bool,
 ) -> Option<ParsedDiagnostics> {
-    let mut message = match serde_json::from_str::<CompilerMessage>(message) {
+    let CompilerMessage { message, code, level, spans, mut children } = match serde_json::from_str::<CompilerMessage>(message) {
         Ok(m) => m,
         Err(e) => {
             debug!("build error {:?}", e);
@@ -79,14 +79,14 @@ pub fn parse_diagnostics(
 
     // Only messages with spans are useful - those without it are often general
     // information, like "aborting due to X previous errors".
-    if message.spans.is_empty() {
+    if spans.is_empty() {
         return None;
     }
 
     // Single labelless children spans often mean to logically use children message
     // as their label. Since we're processing only labeled spans here, be sure to
     // also include the children message as their 'label' in this case.
-    for associated in &mut message.children.iter_mut().filter(|c| c.spans.len() == 1) {
+    for associated in &mut children.iter_mut().filter(|c| c.spans.len() == 1) {
         for span in &mut associated.spans {
             if span.label.is_none() {
                 span.label = Some(associated.message.clone());
@@ -94,30 +94,41 @@ pub fn parse_diagnostics(
         }
     }
 
+    let (secondary, aux): (Vec<AssociatedMessage>, Vec<AssociatedMessage>) = children
+        .into_iter()
+        .partition(|c| c.spans.len() == 1 && c.spans[0].label.is_some());
+
+
     // A single compiler message can consist of multiple primary spans, each
     // corresponding to equally important main cause of the same reported
     // error/warning type. Because of this, we split those into multiple LSP
     // diagnostics, since they can contain a single primary range. Those will
     // also share any additional notes, suggestions, and secondary spans emitted
     // by rustc, in a form of LSP diagnostic related information.
-    let (primaries, secondaries): (Vec<DiagnosticSpan>, Vec<DiagnosticSpan>) = message
-        .spans
+    let (primaries, mut secondaries): (Vec<DiagnosticSpan>, Vec<DiagnosticSpan>) = spans
         .iter()
         .cloned()
         .partition(|span| span.is_primary);
 
+    secondaries.extend(secondary.into_iter().map(|msg| {
+        let mut span = msg.spans.into_iter().nth(0).unwrap();
+        span.is_primary = false;
+        span
+    }));
+    // secondaries.sort_by_key(|x| &x.is_primary);
+
     let mut diagnostics = HashMap::new();
 
     // If the client doesn't support related information, emit separate diagnostics for secondary spans
-    let diagnostic_spans = if related_information_support {
-        &primaries
+    let diagnostic_spans: Vec<&DiagnosticSpan> = if related_information_support {
+        primaries.iter().collect()
     } else {
-        &message.spans
+        primaries.iter().chain(&secondaries).collect()
     };
 
-    for (path, diagnostic) in diagnostic_spans.iter().map(|span| {
-        let children = || message.children.iter().flat_map(|msg| &msg.spans);
-        let all_spans = || iter::once(span).chain(&secondaries).chain(children());
+    for (path, diagnostic) in diagnostic_spans.into_iter().map(|span| {
+        let children_spans = || aux.iter().flat_map(|msg| &msg.spans);
+        let all_spans = || iter::once(span).chain(&secondaries).chain(children_spans());
 
         let suggestions = make_suggestions(span, all_spans());
         let related_information = if related_information_support {
@@ -127,13 +138,13 @@ pub fn parse_diagnostics(
         };
 
         let diagnostic_message = {
-            let mut diagnostic_message = message.message.clone();
+            let mut diagnostic_message = message.clone();
 
             if let Some(ref label) = span.label {
                 diagnostic_message.push_str(&format!("\n\n{}", label));
             }
 
-            if let Some(notes) = format_notes(&message.children, span) {
+            if let Some(notes) = format_notes(&aux, span) {
                 diagnostic_message.push_str(&format!("\n\n{}", notes));
             }
             diagnostic_message
@@ -152,8 +163,8 @@ pub fn parse_diagnostics(
 
         let diagnostic = Diagnostic {
             range: ls_util::rls_to_range(rls_span.range),
-            severity: Some(severity(&message.level, span.is_primary)),
-            code: Some(NumberOrString::String(match message.code {
+            severity: Some(severity(&level, span.is_primary)),
+            code: Some(NumberOrString::String(match code {
                 Some(ref c) => c.code.clone(),
                 None => String::new(),
             })),
