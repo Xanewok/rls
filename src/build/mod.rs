@@ -33,12 +33,12 @@ use std::thread;
 use std::time::Duration;
 
 mod cargo;
+mod cargo_plan;
 pub mod environment;
 mod external;
-mod plan;
 mod rustc;
 
-use self::plan::{Plan as BuildPlan, WorkStatus};
+use self::cargo_plan::{CargoPlan, WorkStatus};
 
 /// Manages builds.
 ///
@@ -142,7 +142,7 @@ struct CompilationContext {
     needs_rebuild: bool,
     /// Build plan, which should know all the inter-package/target dependencies
     /// along with args/envs. Only contains inter-package dep-graph for now.
-    build_plan: BuildPlan,
+    build_plan: CargoPlan,
 }
 
 impl CompilationContext {
@@ -151,7 +151,7 @@ impl CompilationContext {
             cwd: None,
             build_dir: None,
             needs_rebuild: true,
-            build_plan: BuildPlan::new(),
+            build_plan: CargoPlan::new(),
         }
     }
 }

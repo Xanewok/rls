@@ -20,8 +20,8 @@ use failure::{self, format_err};
 use serde_json;
 
 use crate::actions::progress::ProgressUpdate;
+use crate::build::cargo_plan::CargoPlan;
 use crate::build::environment::{self, Environment, EnvironmentLock};
-use crate::build::plan::Plan;
 use crate::build::{BufWriter, BuildResult, CompilationContext, Internals, PackageArg};
 use crate::config::Config;
 use log::{debug, error, trace, warn};
@@ -188,7 +188,7 @@ fn run_cargo(
 
     // Since Cargo build routine will try to regenerate the unit dep graph,
     // we need to clear the existing dep graph.
-    compilation_cx.lock().unwrap().build_plan = Plan::for_packages(pkg_names);
+    compilation_cx.lock().unwrap().build_plan = CargoPlan::for_packages(pkg_names);
 
     let compile_opts = CompileOptions {
         spec,

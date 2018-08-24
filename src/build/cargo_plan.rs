@@ -51,7 +51,7 @@ crate type UnitKey = (PackageId, Target, CompileMode);
 
 /// Holds the information how exactly the build will be performed for a given
 /// workspace with given, specified features.
-crate struct Plan {
+crate struct CargoPlan {
     /// Stores a full Cargo `Unit` data for a first processed unit with a given key.
     crate units: HashMap<UnitKey, OwnedUnit>,
     /// Main dependency graph between the simplified units.
@@ -68,13 +68,13 @@ crate struct Plan {
     built_packages: HashSet<String>,
 }
 
-impl Plan {
-    crate fn new() -> Plan {
+impl CargoPlan {
+    crate fn new() -> CargoPlan {
         Self::for_packages(HashSet::new())
     }
 
-    crate fn for_packages(pkgs: HashSet<String>) -> Plan {
-        Plan {
+    crate fn for_packages(pkgs: HashSet<String>) -> CargoPlan {
+        CargoPlan {
             units: HashMap::new(),
             dep_graph: HashMap::new(),
             rev_dep_graph: HashMap::new(),
@@ -653,7 +653,7 @@ macro_rules! print_dep_graph {
     };
 }
 
-impl fmt::Debug for Plan {
+impl fmt::Debug for CargoPlan {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&format!("Units: {:?}\n", self.units))?;
         print_dep_graph!("Dependency graph", self.dep_graph, f);
