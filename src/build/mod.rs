@@ -36,6 +36,7 @@ mod cargo;
 mod cargo_plan;
 pub mod environment;
 mod external;
+mod plan;
 mod rustc;
 
 use self::cargo_plan::{CargoPlan, WorkStatus};
