@@ -23,8 +23,13 @@ trait BuildGraph {
     fn deps(&self, key: <Self::Unit as BuildKey>::Key) -> Vec<&Self::Unit>;
 
     fn dirties<T: AsRef<Path>>(&self, files: &[T]) -> Vec<&Self::Unit>;
+    /// For a given set of select dirty units, returns a set of all the
+    /// dependencies that has to be rebuilt transitively.
     fn dirties_transitive<T: AsRef<Path>>(&self, files: &[T]) -> Vec<&Self::Unit>;
-
+    /// Returns a topological ordering of units with regards to reverse
+    /// dependencies.
+    /// The output is a stack of units that can be linearly rebuilt, starting
+    /// from the last element.
     fn topological_sort(&self, units: Vec<&Self::Unit>) -> Vec<&Self::Unit>;
 }
 
@@ -44,10 +49,6 @@ struct RawInvocation {
     env: BTreeMap<String, String>,
     #[serde(default)]
     cwd: Option<PathBuf>,
-}
-
-crate struct DummyPlan {
-    invocations: Vec<Invocation>,
 }
 
 #[derive(Debug)]
@@ -88,12 +89,6 @@ impl BuildKey for Invocation {
     }
 }
 
-impl Invocation {
-    fn deps<'a>(&'a self, plan: &'a DummyPlan) -> impl Iterator<Item = &'a Invocation> {
-        self.deps.iter().map(move |d| &plan.invocations[*d])
-    }
-}
-
 impl From<RawInvocation> for Invocation {
     fn from(raw: RawInvocation) -> Invocation {
         let mut command = process(&raw.program);
@@ -112,24 +107,6 @@ impl From<RawInvocation> for Invocation {
             src_path: guess_rustc_src_path(&command),
             command,
         }
-    }
-}
-
-impl DummyPlan {
-    fn try_from_raw(raw: RawPlan) -> Result<DummyPlan, ()> {
-        // Sanity check, each dependency (index) has to be inside the build plan
-        if raw
-            .invocations
-            .iter()
-            .flat_map(|inv| &inv.deps)
-            .any(|idx| raw.invocations.get(*idx).is_none())
-        {
-            return Err(());
-        }
-
-        Ok(DummyPlan {
-            invocations: raw.invocations.into_iter().map(|x| x.into()).collect(),
-        })
     }
 }
 
@@ -247,8 +224,6 @@ impl BuildGraph for BuildPlan {
         results.iter().map(|key| &self.units[key]).collect()
     }
 
-    /// For a given set of select dirty units, returns a set of all the
-    /// dependencies that has to be rebuilt transitively.
     fn dirties_transitive<T: AsRef<Path>>(&self, files: &[T]) -> Vec<&Self::Unit> {
         let mut results = HashSet::new();
 
@@ -267,9 +242,6 @@ impl BuildGraph for BuildPlan {
         results.into_iter().map(|key| &self.units[&key]).collect()
     }
 
-    /// Returns a topological ordering of a connected DAG of rev deps. The
-    /// output is a stack of units that can be linearly rebuilt, starting from
-    /// the last element.
     fn topological_sort(&self, units: Vec<&Self::Unit>) -> Vec<&Self::Unit> {
         let dirties: HashSet<_> = units.into_iter().map(|u| u.key()).collect();
 
@@ -366,7 +338,10 @@ mod tests {
         fn sorted(self) -> Self;
     }
 
-    impl<T> Sorted for Vec<T> where T: Ord {
+    impl<T> Sorted for Vec<T>
+    where
+        T: Ord,
+    {
         fn sorted(mut self: Self) -> Self {
             self.sort();
             self
