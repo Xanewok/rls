@@ -150,6 +150,7 @@ impl BuildPlan {
         }
     }
 
+    #[rustfmt::skip]
     fn add_dep(&mut self, key: u64, dep: u64) {
         self.deps.entry(key).or_insert_with(HashSet::new).insert(dep);
         self.rev_deps.entry(dep).or_insert_with(HashSet::new).insert(key);
@@ -204,7 +205,8 @@ impl BuildGraph for BuildPlan {
             // package by finding longest (most specified) path prefix.
             let matching_prefix_components = |a: &Path, b: &Path| -> usize {
                 assert!(a.is_absolute() && b.is_absolute());
-                a.components().zip(b.components())
+                a.components()
+                    .zip(b.components())
                     .take_while(|&(x, y)| x == y)
                     .count()
             };
@@ -231,7 +233,8 @@ impl BuildGraph for BuildPlan {
             // (e.g. multiple crate binaries, their unit test harness), so
             // treat all of them as dirty.
             if let Some(max_prefix) = matching_units.iter().map(|(_, p)| p).max() {
-                let dirty_keys = matching_units.iter()
+                let dirty_keys = matching_units
+                    .iter()
                     .filter(|(_, prefix)| prefix == max_prefix)
                     .map(|(unit, _)| unit.key());
 
@@ -273,7 +276,12 @@ mod tests {
     struct SrcPaths<'a>(Vec<&'a PathBuf>);
     impl<'a> SrcPaths<'a> {
         fn from(plan: &BuildPlan) -> SrcPaths<'_> {
-            SrcPaths(plan.units().iter().filter_map(|u| u.src_path.as_ref()).collect())
+            SrcPaths(
+                plan.units()
+                    .iter()
+                    .filter_map(|u| u.src_path.as_ref())
+                    .collect(),
+            )
         }
     }
 
@@ -311,7 +319,7 @@ mod tests {
 
         assert_eq!(dirties("/my/dummy.rs"), Vec::<&str>::new());
         assert_eq!(dirties("/my/repo/dummy.rs"), vec!["/my/repo/build.rs"]);
-        assert_eq!(dirties("/my/repo/src/dummy.rs"), vec!["/my/repo/src/lib.rs"]);
-        assert_eq!(dirties("/my/repo/src/inner/dummy.rs"), vec!["/my/repo/src/lib.rs"]);
+        assert_eq!(dirties("/my/repo/src/c.rs"), vec!["/my/repo/src/lib.rs"]);
+        assert_eq!(dirties("/my/repo/src/a/b.rs"), vec!["/my/repo/src/lib.rs"]);
     }
 }
