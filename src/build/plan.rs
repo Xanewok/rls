@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use cargo::util::{process, ProcessBuilder};
 use serde_derive::Deserialize;
 
-use super::cargo_plan::WorkStatus;
+use super::cargo_plan::{JobQueue, WorkStatus};
 
 trait BuildKey {
     type Key: Eq + Hash;
@@ -31,6 +31,8 @@ trait BuildGraph {
     /// The output is a stack of units that can be linearly rebuilt, starting
     /// from the last element.
     fn topological_sort(&self, units: Vec<&Self::Unit>) -> Vec<&Self::Unit>;
+    // FIXME: Temporary
+    fn prepare_work<T: AsRef<Path>>(&self, files: &[T]) -> WorkStatus;
 }
 
 #[derive(Debug, Deserialize)]
@@ -271,6 +273,16 @@ impl BuildGraph for BuildPlan {
                 output.push(unit);
             }
         }
+    }
+
+    // FIXME: Temporary
+    fn prepare_work<T: AsRef<Path>>(&self, files: &[T]) -> WorkStatus {
+        let dirties = self.dirties_transitive(files);
+        let topo = self.topological_sort(dirties);
+
+        let cmds = topo.into_iter().map(|unit| unit.command.clone()).collect();
+
+        WorkStatus::Execute(JobQueue::with_commands(cmds))
     }
 }
 

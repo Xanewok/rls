@@ -530,6 +530,10 @@ impl fmt::Debug for JobQueue {
 }
 
 impl JobQueue {
+    crate fn with_commands(jobs: Vec<ProcessBuilder>) -> JobQueue {
+        JobQueue(jobs)
+    }
+
     crate fn dequeue(&mut self) -> Option<ProcessBuilder> {
         self.0.pop()
     }
