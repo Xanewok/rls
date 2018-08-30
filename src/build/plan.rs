@@ -21,10 +21,11 @@ trait BuildGraph {
     fn get_mut(&mut self, key: <Self::Unit as BuildKey>::Key) -> Option<&mut Self::Unit>;
 
     fn deps(&self, key: <Self::Unit as BuildKey>::Key) -> Vec<&Self::Unit>;
-    // TODO: fn emplace_dep
 
     fn dirties<T: AsRef<Path>>(&self, files: &[T]) -> Vec<&Self::Unit>;
     fn dirties_transitive<T: AsRef<Path>>(&self, files: &[T]) -> Vec<&Self::Unit>;
+
+    fn topological_sort(&self, units: Vec<&Self::Unit>) -> Vec<&Self::Unit>;
 }
 
 #[derive(Debug, Deserialize)]
@@ -265,10 +266,44 @@ impl BuildGraph for BuildPlan {
 
         results.into_iter().map(|key| &self.units[&key]).collect()
     }
+
+    /// Returns a topological ordering of a connected DAG of rev deps. The
+    /// output is a stack of units that can be linearly rebuilt, starting from
+    /// the last element.
+    fn topological_sort(&self, units: Vec<&Self::Unit>) -> Vec<&Self::Unit> {
+        let dirties: HashSet<_> = units.into_iter().map(|u| u.key()).collect();
+
+        let mut visited: HashSet<_> = HashSet::new();
+        let mut output = vec![];
+
+        for k in dirties {
+            if !visited.contains(&k) {
+                dfs(k, &self.rev_deps, &mut visited, &mut output);
+            }
+        }
+
+        return output.iter().map(|key| &self.units[key]).collect();
+
+        // Process graph depth-first recursively. A node needs to be pushed
+        // after processing every other before to ensure topological ordering.
+        fn dfs(
+            unit: u64,
+            graph: &HashMap<u64, HashSet<u64>>,
+            visited: &mut HashSet<u64>,
+            output: &mut Vec<u64>,
+        ) {
+            if visited.insert(unit) {
+                for &neighbour in graph.get(&unit).iter().flat_map(|&edges| edges) {
+                    dfs(neighbour, graph, visited, output);
+                }
+                output.push(unit);
+            }
+        }
+    }
 }
 
 fn guess_rustc_src_path(cmd: &ProcessBuilder) -> Option<PathBuf> {
-    // FIXME: Needle API for OsString can't come soon enough - this function
+    // FIXME: RFC #2500 (Needle API) should be useful for OsStr - this function
     // will be called often so it'd be great to avoid the transcoding overhead
     if !cmd.get_program().to_string_lossy().ends_with("rustc") {
         return None;
@@ -319,7 +354,7 @@ mod tests {
         }
     }
 
-    fn paths(invocations: Vec<&Invocation>) -> Vec<&str> {
+    fn paths<'a>(invocations: &Vec<&'a Invocation>) -> Vec<&'a str> {
         invocations
             .iter()
             .filter_map(|d| d.src_path.as_ref())
@@ -376,17 +411,45 @@ mod tests {
         eprintln!("plan: {:?}", &plan);
 
         assert_eq!(
-            paths(plan.dirties(&["/my/repo/src/a/b.rs"])),
+            paths(&plan.dirties(&["/my/repo/src/a/b.rs"])),
             vec!["/my/repo/src/lib.rs"]
         );
 
         assert_eq!(
-            paths(plan.dirties_transitive(&["/my/repo/file.rs"])).sorted(),
+            paths(&plan.dirties_transitive(&["/my/repo/file.rs"])).sorted(),
             vec!["/my/repo/build.rs", "/my/repo/src/lib.rs"].sorted(),
         );
         assert_eq!(
-            paths(plan.dirties_transitive(&["/my/repo/src/file.rs"])).sorted(),
+            paths(&plan.dirties_transitive(&["/my/repo/src/file.rs"])).sorted(),
             vec!["/my/repo/src/lib.rs"].sorted(),
         );
+    }
+
+    #[test]
+    fn topological_sort() {
+        let plan = r#"{"invocations": [
+            { "deps": [],  "program": "rustc", "args": ["--crate-name", "build_script_build", "/my/repo/build.rs"], "env": {}, "outputs": [] },
+            { "deps": [0], "program": "rustc", "args": ["--crate-name", "repo", "/my/repo/src/lib.rs"], "env": {}, "outputs": [] }
+        ]}"#;
+        let plan = serde_json::from_str::<RawPlan>(&plan).unwrap();
+        let plan = BuildPlan::try_from_raw(plan).unwrap();
+
+        eprintln!("src_paths: {}", &SrcPaths::from(&plan));
+        eprintln!("plan: {:?}", &plan);
+
+        let units_to_rebuild = plan.dirties_transitive(&["/my/repo/file.rs"]);
+        assert_eq!(
+            paths(&units_to_rebuild).sorted(),
+            vec!["/my/repo/build.rs", "/my/repo/src/lib.rs"].sorted(),
+        );
+
+        // TODO: Test on non-trivial input, use Iterator::position if
+        // nondeterminate order wrt hashing is a problem
+        // Jobs that have to run first are *last* in the topological sorting
+        let topo_units = plan.topological_sort(units_to_rebuild);
+        assert_eq!(
+            paths(&topo_units),
+            vec!["/my/repo/src/lib.rs", "/my/repo/build.rs"],
+        )
     }
 }
