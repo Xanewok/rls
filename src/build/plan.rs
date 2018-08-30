@@ -60,7 +60,7 @@ crate struct Invocation {
 
 /// Safe build plan type, invocation dependencies are guaranteed to be inside
 /// the plan.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct BuildPlan {
     units: HashMap<u64, Invocation>,
     deps: HashMap<u64, HashSet<u64>>,
@@ -132,7 +132,30 @@ impl DummyPlan {
 }
 
 impl BuildPlan {
-    fn try_from_raw(raw: RawPlan) -> Result<BuildPlan, ()> {
+    crate fn new() -> BuildPlan {
+        Default::default()
+    }
+
+    crate fn with_units(units: Vec<Invocation>) -> BuildPlan {
+        let mut plan = BuildPlan::new();
+        for unit in &units {
+            for &dep in &unit.deps {
+                plan.add_dep(unit.key(), dep as u64);
+            }
+        }
+
+        BuildPlan {
+            units: units.into_iter().map(|u| (u.key(), u)).collect(),
+            ..plan
+        }
+    }
+
+    fn add_dep(&mut self, key: u64, dep: u64) {
+        self.deps.entry(key).or_insert_with(HashSet::new).insert(dep);
+        self.rev_deps.entry(dep).or_insert_with(HashSet::new).insert(key);
+    }
+
+    crate fn try_from_raw(raw: RawPlan) -> Result<BuildPlan, ()> {
         // Sanity check, each dependency (index) has to be inside the build plan
         if raw
             .invocations
@@ -145,22 +168,7 @@ impl BuildPlan {
 
         let units: Vec<Invocation> = raw.invocations.into_iter().map(|x| x.into()).collect();
 
-        let mut rev_deps = HashMap::new();
-        let deps = units.iter().map(|unit| {
-            let unit_deps = unit.deps.iter().map(|&idx| {
-                let key = units[idx].key();
-                rev_deps.entry(unit.key()).or_insert_with(HashSet::new).insert(key);
-                key
-            }).collect();
-            (unit.key(), unit_deps)
-        }).collect();
-        let units = units.into_iter().map(|x| (x.key(), x)).collect();
-
-        Ok(BuildPlan {
-            units,
-            deps,
-            rev_deps,
-        })
+        Ok(BuildPlan::with_units(units))
     }
 }
 
@@ -270,7 +278,7 @@ mod tests {
     }
 
     impl<'a> fmt::Display for SrcPaths<'a> {
-        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             let mut sorted = self.0.clone();
             sorted.sort();
             writeln!(f, "[")?;
@@ -304,5 +312,6 @@ mod tests {
         assert_eq!(dirties("/my/dummy.rs"), Vec::<&str>::new());
         assert_eq!(dirties("/my/repo/dummy.rs"), vec!["/my/repo/build.rs"]);
         assert_eq!(dirties("/my/repo/src/dummy.rs"), vec!["/my/repo/src/lib.rs"]);
+        assert_eq!(dirties("/my/repo/src/inner/dummy.rs"), vec!["/my/repo/src/lib.rs"]);
     }
 }
