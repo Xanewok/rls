@@ -24,6 +24,7 @@ trait BuildGraph {
     // TODO: fn emplace_dep
 
     fn dirties<T: AsRef<Path>>(&self, files: &[T]) -> Vec<&Self::Unit>;
+    fn dirties_transitive<T: AsRef<Path>>(&self, files: &[T]) -> Vec<&Self::Unit>;
 }
 
 #[derive(Debug, Deserialize)]
@@ -140,7 +141,7 @@ impl BuildPlan {
         let mut plan = BuildPlan::new();
         for unit in &units {
             for &dep in &unit.deps {
-                plan.add_dep(unit.key(), dep as u64);
+                plan.add_dep(unit.key(), units[dep].key());
             }
         }
 
@@ -244,6 +245,26 @@ impl BuildGraph for BuildPlan {
 
         results.iter().map(|key| &self.units[key]).collect()
     }
+
+    /// For a given set of select dirty units, returns a set of all the
+    /// dependencies that has to be rebuilt transitively.
+    fn dirties_transitive<T: AsRef<Path>>(&self, files: &[T]) -> Vec<&Self::Unit> {
+        let mut results = HashSet::new();
+
+        let mut stack = self.dirties(files);
+
+        while let Some(key) = stack.pop().map(|u| u.key()) {
+            if results.insert(key) {
+                if let Some(rdeps) = self.rev_deps.get(&key) {
+                    for rdep in rdeps {
+                        stack.push(&self.units[rdep]);
+                    }
+                }
+            }
+        }
+
+        results.into_iter().map(|key| &self.units[&key]).collect()
+    }
 }
 
 fn guess_rustc_src_path(cmd: &ProcessBuilder) -> Option<PathBuf> {
@@ -291,10 +312,29 @@ mod tests {
             sorted.sort();
             writeln!(f, "[")?;
             for src_path in sorted {
-                write!(f, "  {}, ", src_path.display())?;
+                write!(f, "  {}, \n", src_path.display())?;
             }
             writeln!(f, "]")?;
             Ok(())
+        }
+    }
+
+    fn paths(invocations: Vec<&Invocation>) -> Vec<&str> {
+        invocations
+            .iter()
+            .filter_map(|d| d.src_path.as_ref())
+            .map(|p| p.to_str().unwrap())
+            .collect()
+    }
+
+    trait Sorted {
+        fn sorted(self) -> Self;
+    }
+
+    impl<T> Sorted for Vec<T> where T: Ord {
+        fn sorted(mut self: Self) -> Self {
+            self.sort();
+            self
         }
     }
 
@@ -321,5 +361,32 @@ mod tests {
         assert_eq!(dirties("/my/repo/dummy.rs"), vec!["/my/repo/build.rs"]);
         assert_eq!(dirties("/my/repo/src/c.rs"), vec!["/my/repo/src/lib.rs"]);
         assert_eq!(dirties("/my/repo/src/a/b.rs"), vec!["/my/repo/src/lib.rs"]);
+    }
+
+    #[test]
+    fn dirties_transitive() {
+        let plan = r#"{"invocations": [
+            { "deps": [],  "program": "rustc", "args": ["--crate-name", "build_script_build", "/my/repo/build.rs"], "env": {}, "outputs": [] },
+            { "deps": [0], "program": "rustc", "args": ["--crate-name", "repo", "/my/repo/src/lib.rs"], "env": {}, "outputs": [] }
+        ]}"#;
+        let plan = serde_json::from_str::<RawPlan>(&plan).unwrap();
+        let plan = BuildPlan::try_from_raw(plan).unwrap();
+
+        eprintln!("src_paths: {}", &SrcPaths::from(&plan));
+        eprintln!("plan: {:?}", &plan);
+
+        assert_eq!(
+            paths(plan.dirties(&["/my/repo/src/a/b.rs"])),
+            vec!["/my/repo/src/lib.rs"]
+        );
+
+        assert_eq!(
+            paths(plan.dirties_transitive(&["/my/repo/file.rs"])).sorted(),
+            vec!["/my/repo/build.rs", "/my/repo/src/lib.rs"].sorted(),
+        );
+        assert_eq!(
+            paths(plan.dirties_transitive(&["/my/repo/src/file.rs"])).sorted(),
+            vec!["/my/repo/src/lib.rs"].sorted(),
+        );
     }
 }
