@@ -1,12 +1,10 @@
+use std::collections::hash_map::DefaultHasher;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
-use std::collections::BTreeMap;
-use std::collections::{HashSet, hash_map::DefaultHasher};
-
-use serde_derive::Deserialize;
-use cargo::util::{process, ProcessBuilder};
-
 use std::path::{Path, PathBuf};
-use std::collections::HashMap;
+
+use cargo::util::{process, ProcessBuilder};
+use serde_derive::Deserialize;
 
 use super::cargo_plan::WorkStatus;
 
@@ -253,7 +251,7 @@ fn guess_rustc_src_path(cmd: &ProcessBuilder) -> Option<PathBuf> {
     Some(match (cmd.get_cwd(), file_path.is_absolute()) {
         (_, true) => file_path,
         (Some(cwd), _) => cwd.join(file_path),
-         // TODO: is cwd correct here?
+        // TODO: is cwd correct here?
         (None, _) => std::env::current_dir().ok()?.join(file_path),
     })
 }
@@ -295,8 +293,13 @@ mod tests {
 
         eprintln!("src_paths: {}", &SrcPaths::from(&plan));
 
-        let dirties = |file: &str| -> Vec<&str> { plan.dirties(&[file])
-            .iter().filter_map(|d| d.src_path.as_ref()).map(|p| p.to_str().unwrap()).collect() };
+        let dirties = |file: &str| -> Vec<&str> {
+            plan.dirties(&[file])
+                .iter()
+                .filter_map(|d| d.src_path.as_ref())
+                .map(|p| p.to_str().unwrap())
+                .collect()
+        };
 
         assert_eq!(dirties("/my/dummy.rs"), Vec::<&str>::new());
         assert_eq!(dirties("/my/repo/dummy.rs"), vec!["/my/repo/build.rs"]);
