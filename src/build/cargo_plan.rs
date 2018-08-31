@@ -38,7 +38,7 @@ use cargo::util::{CargoResult, ProcessBuilder};
 use cargo_metadata;
 use crate::build::PackageArg;
 use crate::lsp_data::parse_file_path;
-use log::{error, trace};
+use log::{debug, error, trace};
 use url::Url;
 
 use super::{BuildResult, Internals};
@@ -48,6 +48,10 @@ use crate::actions::progress::ProgressUpdate;
 /// In Target we're mostly interested in TargetKind (Lib, Bin, ...) and name
 /// (e.g. we can have 2 binary targets with different names).
 crate type UnitKey = (PackageId, Target, CompileMode);
+fn show_key(key: &UnitKey) -> String {
+    let (target, mode) = (&key.1, &key.2);
+    format!("({}, {:?}, {}, {:?})", target.name(), target.kind(), target.src_path().path().display(), mode)
+}
 
 /// Holds the information how exactly the build will be performed for a given
 /// workspace with given, specified features.
@@ -124,12 +128,13 @@ impl CargoPlan {
     where
         Filter: Fn(&Unit<'_>) -> bool,
     {
+        debug!("cargo_plan::emplace_dep_with: Adding unit: ({:?}) {:?} {}", show_key(&key_from_unit(unit)), unit, if filter(unit) { "(passed)" } else { "(omitted)"} );
         if !filter(unit) {
             return Ok(());
         }
 
         let key = key_from_unit(unit);
-        self.units.entry(key.clone()).or_insert_with(|| unit.into());
+        self.units.entry(key.clone()).or_insert_with(|| (*unit).into());
         // Process only those units, which are not yet in the dep graph.
         if self.dep_graph.get(&key).is_some() {
             return Ok(());
@@ -138,7 +143,7 @@ impl CargoPlan {
         // Keep all the additional Unit information for a given unit (It's
         // worth remembering, that the units are only discriminated by a
         // pair of (PackageId, TargetKind), so only first occurrence will be saved.
-        self.units.insert(key.clone(), unit.into());
+        self.units.insert(key.clone(), (*unit).into());
 
         // Fetch and insert relevant unit dependencies to the forward dep graph.
         let units = cx.dep_targets(unit);
@@ -166,6 +171,7 @@ impl CargoPlan {
 
         // Recursively process other remaining forward dependencies.
         for unit in units {
+            debug!("cargo_plan::emplace_dep_with:  Adding dep: ({:?}) {:?}", show_key(&key_from_unit(&unit)), unit);
             self.emplace_dep_with_filter(&unit, cx, filter)?;
         }
         Ok(())
@@ -293,7 +299,9 @@ impl CargoPlan {
     /// output is a stack of units that can be linearly rebuilt, starting from
     /// the last element.
     fn topological_sort(&self, dirties: &HashMap<UnitKey, HashSet<UnitKey>>) -> Vec<UnitKey> {
-        let mut visited: HashSet<UnitKey> = HashSet::new();
+        debug!("cargo_plan::topolo: dirties: {:?}", dirties);
+        debug!("cargo_plan::topolo: rev_dep_graph: {:?}", self.rev_dep_graph);
+        let mut visited = HashSet::new();
         let mut output = vec![];
 
         for k in dirties.keys() {
@@ -315,8 +323,9 @@ impl CargoPlan {
             if visited.contains(unit) {
                 return;
             } else {
+                debug!("cargo_plan::topolo::dfs: visiting: {:?}", show_key(unit));
                 visited.insert(unit.clone());
-                for neighbour in &graph[unit] {
+                for neighbour in graph.get(unit).into_iter().flat_map(|nodes| nodes) {
                     dfs(neighbour, graph, visited, output);
                 }
                 output.push(unit.clone());
@@ -382,7 +391,7 @@ impl CargoPlan {
             }
 
             let queue = self.topological_sort(&graph);
-            trace!(
+            debug!(
                 "Topologically sorted dirty graph: {:?} {}",
                 queue,
                 self.is_ready()
@@ -667,7 +676,7 @@ impl fmt::Debug for CargoPlan {
     }
 }
 
-#[derive(Hash, PartialEq, Eq, Debug)]
+#[derive(Hash, PartialEq, Eq, Debug, Clone)]
 /// An owned version of `cargo::core::Unit`.
 crate struct OwnedUnit {
     crate id: PackageId,
@@ -677,8 +686,8 @@ crate struct OwnedUnit {
     crate mode: CompileMode,
 }
 
-impl<'a> From<&'a Unit<'a>> for OwnedUnit {
-    fn from(unit: &Unit<'a>) -> OwnedUnit {
+impl<'a> From<Unit<'a>> for OwnedUnit {
+    fn from(unit: Unit<'a>) -> OwnedUnit {
         OwnedUnit {
             id: unit.pkg.package_id().to_owned(),
             target: unit.target.clone(),
@@ -686,5 +695,99 @@ impl<'a> From<&'a Unit<'a>> for OwnedUnit {
             kind: unit.kind,
             mode: unit.mode,
         }
+    }
+}
+
+// TODO: Finish implementing BuildGraph for CargoPlan
+use crate::build::plan::{BuildGraph, BuildKey};
+
+impl BuildKey for OwnedUnit {
+    type Key = UnitKey;
+
+    fn key(&self) -> UnitKey {
+        (self.id.clone(), self.target.clone(), self.mode)
+    }
+}
+
+impl BuildGraph for CargoPlan {
+    type Unit = OwnedUnit;
+
+    fn units(&self) -> Vec<&Self::Unit> {
+        self.units.values().collect()
+    }
+    fn get(&self, key: <Self::Unit as BuildKey>::Key) -> Option<&Self::Unit> {
+        self.units.get(&key)
+    }
+    fn get_mut(&mut self, key: <Self::Unit as BuildKey>::Key) -> Option<&mut Self::Unit> {
+        self.units.get_mut(&key)
+    }
+    fn deps(&self, key: <Self::Unit as BuildKey>::Key) -> Vec<&Self::Unit> {
+        self.dep_graph
+            .get(&key)
+            .map(|d| d.iter().map(|d| &self.units[d]).collect())
+            .unwrap_or_default()
+    }
+
+    fn add<T>(&mut self, unit: T, deps: Vec<T>)
+    where
+        T: Into<Self::Unit>
+    {
+        let unit = unit.into();
+        debug!("cargo_plan::add: Adding unit: {:?} {:?}", show_key(&unit.key()), unit);
+
+        // Units can depend on others with different Targets or Profiles
+        // (e.g. different `run_custom_build`) despite having the same UnitKey.
+        // We coalesce them here while creating the UnitKey dep graph.
+        // TODO: Are we sure? Can we figure that out?
+        let deps = deps.into_iter().map(|d| d.into()).filter(|dep| unit.key() != dep.key());
+
+        for dep in deps {
+            debug!("cargo_plan::add:  Adding dep: {:?} {:?}", show_key(&dep.key()), dep);
+            self.dep_graph.entry(unit.key()).or_insert_with(HashSet::new).insert(dep.key());
+            self.rev_dep_graph.entry(dep.key()).or_insert_with(HashSet::new).insert(unit.key());
+
+            debug!("cargo_plan::add:  rdeps4 dep: {:?}", show_key(&dep.key()));
+            for rdep in &self.rev_dep_graph[&dep.key()] {
+            debug!("cargo_plan::add:   rdep: {:?}", show_key(&rdep));
+            }
+
+            self.units.entry(dep.key()).or_insert(dep);
+        }
+
+        // We expect these entries to be present for each unit in the graph
+        self.dep_graph.entry(unit.key()).or_insert_with(HashSet::new);
+        self.rev_dep_graph.entry(unit.key()).or_insert_with(HashSet::new);
+
+        self.units.entry(unit.key()).or_insert(unit);
+    }
+
+    fn dirties<T: AsRef<Path>>(&self, files: &[T]) -> Vec<&Self::Unit> {
+        self.fetch_dirty_units(files)
+            .iter()
+            .map(|key| self.units.get(key).expect("dirties"))
+            .collect()
+    }
+
+    fn dirties_transitive<T: AsRef<Path>>(&self, files: &[T]) -> Vec<&Self::Unit> {
+        let dirties = self.fetch_dirty_units(files);
+
+        self.transitive_dirty_units(&dirties)
+            .iter()
+            .map(|key| self.units.get(key).expect("dirties_transitive"))
+            .collect()
+    }
+
+    fn topological_sort(&self, units: Vec<&Self::Unit>) -> Vec<&Self::Unit> {
+        let keys = units.into_iter().map(|u| u.key()).collect();
+        let graph = self.dirty_rev_dep_graph(&keys);
+
+        CargoPlan::topological_sort(self, &graph)
+            .iter()
+            .map(|key| self.units.get(key).expect("topological_sort"))
+            .collect()
+    }
+    // FIXME: Temporary
+    fn prepare_work<T: AsRef<Path>>(&self, files: &[T]) -> WorkStatus {
+        unimplemented!()
     }
 }

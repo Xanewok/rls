@@ -36,7 +36,8 @@ mod cargo;
 mod cargo_plan;
 pub mod environment;
 mod external;
-mod plan;
+// TODO: pub? only cargo_plan should see that for now
+pub mod plan;
 mod rustc;
 
 use self::cargo_plan::{CargoPlan, WorkStatus};

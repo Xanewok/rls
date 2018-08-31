@@ -24,7 +24,7 @@ use crate::build::cargo_plan::CargoPlan;
 use crate::build::environment::{self, Environment, EnvironmentLock};
 use crate::build::{BufWriter, BuildResult, CompilationContext, Internals, PackageArg};
 use crate::config::Config;
-use log::{debug, error, trace, warn};
+use log::{debug, trace, warn};
 use rls_data::Analysis;
 use rls_vfs::Vfs;
 
@@ -327,13 +327,20 @@ impl Executor for RlsExecutor {
     /// the work is actually executed). This is called even for a target that
     /// is fresh and won't be compiled.
     fn init(&self, cx: &Context<'_, '_>, unit: &Unit<'_>) {
+        use crate::build::plan::BuildGraph;
+
         let mut compilation_cx = self.compilation_cx.lock().unwrap();
         let plan = &mut compilation_cx.build_plan;
-        let only_primary = |unit: &Unit<'_>| self.is_primary_crate(unit.pkg.package_id());
 
-        if let Err(err) = plan.emplace_dep_with_filter(unit, cx, &only_primary) {
-            error!("{:?}", err);
-        }
+        let mut primary_crate_deps = cx.dep_targets(unit);
+        primary_crate_deps.retain(|u| self.is_primary_crate(u.pkg.package_id()));
+
+        plan.add(*unit, primary_crate_deps);
+
+        // let only_primary = |unit: &Unit<'_>| self.is_primary_crate(unit.pkg.package_id());
+        // if let Err(err) = plan.emplace_dep_with_filter(unit, cx, &only_primary) {
+        //     log::error!("{:?}", err);
+        // }
     }
 
     fn force_rebuild(&self, unit: &Unit<'_>) -> bool {

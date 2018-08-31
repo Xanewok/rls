@@ -21,7 +21,9 @@ crate trait BuildGraph {
     fn get_mut(&mut self, key: <Self::Unit as BuildKey>::Key) -> Option<&mut Self::Unit>;
     fn deps(&self, key: <Self::Unit as BuildKey>::Key) -> Vec<&Self::Unit>;
 
-    fn add(&mut self, unit: &Self::Unit, deps: Vec<&Self::Unit>);
+    fn add<T>(&mut self, unit: T, deps: Vec<T>)
+    where
+        T: Into<Self::Unit>;
 
     fn dirties<T: AsRef<Path>>(&self, files: &[T]) -> Vec<&Self::Unit>;
     /// For a given set of select dirty units, returns a set of all the
@@ -177,14 +179,21 @@ impl BuildGraph for BuildPlan {
             .unwrap_or_default()
     }
 
-    fn add(&mut self, unit: &Self::Unit, deps: Vec<&Self::Unit>) {
-        for &unit in deps.iter().chain(std::iter::once(&unit)) {
-            self.units.insert(unit.key(), unit.to_owned());
+    fn add<T>(&mut self, unit: T, deps: Vec<T>)
+    where
+        T: Into<Self::Unit>
+    {
+        let unit = unit.into();
+
+        for dep in deps.into_iter().map(|d| d.into()) {
+            self.add_dep(unit.key(), dep.key());
+
+            self.units.entry(dep.key()).or_insert(dep);
         }
 
-        for dep in deps {
-            self.add_dep(unit.key(), dep.key());
-        }
+        // TODO: default rdeps is necessary in cargo_plan, do we need it here?
+        self.rev_deps.entry(unit.key()).or_insert_with(HashSet::new);
+        self.units.entry(unit.key()).or_insert(unit);
     }
 
     // FIXME: Change associating files with units by their path but rather
