@@ -8,19 +8,20 @@ use serde_derive::Deserialize;
 
 use super::cargo_plan::{JobQueue, WorkStatus};
 
-trait BuildKey {
+crate trait BuildKey {
     type Key: Eq + Hash;
     fn key(&self) -> Self::Key;
 }
 
-trait BuildGraph {
+crate trait BuildGraph {
     type Unit: BuildKey;
 
     fn units(&self) -> Vec<&Self::Unit>;
     fn get(&self, key: <Self::Unit as BuildKey>::Key) -> Option<&Self::Unit>;
     fn get_mut(&mut self, key: <Self::Unit as BuildKey>::Key) -> Option<&mut Self::Unit>;
-
     fn deps(&self, key: <Self::Unit as BuildKey>::Key) -> Vec<&Self::Unit>;
+
+    fn add(&mut self, unit: &Self::Unit, deps: Vec<&Self::Unit>);
 
     fn dirties<T: AsRef<Path>>(&self, files: &[T]) -> Vec<&Self::Unit>;
     /// For a given set of select dirty units, returns a set of all the
@@ -53,7 +54,7 @@ struct RawInvocation {
     cwd: Option<PathBuf>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 crate struct Invocation {
     deps: Vec<usize>, // FIXME: Use arena and store refs instead for ergonomics
     outputs: Vec<PathBuf>,
@@ -174,6 +175,16 @@ impl BuildGraph for BuildPlan {
             .get(&key)
             .map(|d| d.iter().map(|d| &self.units[d]).collect())
             .unwrap_or_default()
+    }
+
+    fn add(&mut self, unit: &Self::Unit, deps: Vec<&Self::Unit>) {
+        for &unit in deps.iter().chain(std::iter::once(&unit)) {
+            self.units.insert(unit.key(), unit.to_owned());
+        }
+
+        for dep in deps {
+            self.add_dep(unit.key(), dep.key());
+        }
     }
 
     // FIXME: Change associating files with units by their path but rather
