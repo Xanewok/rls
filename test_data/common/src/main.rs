@@ -7,20 +7,20 @@
 // <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
-struct Bar {
+struct Xyz {
     x: u64,
 }
 
 #[test]
 pub fn test_fn() {
-    let bar = Bar { x: 4 };
-    println!("bar: {}", bar.x);
+    let xyz = Xyz { x: 4 };
+    println!("bar: {}", xyz.x);
 }
 
 pub fn main() {
     let world = "world";
     println!("Hello, {}!", world);
 
-    let bar2 = Bar { x: 5 };
-    println!("bar2: {}", bar2.x);
+    let xyz2 = Xyz { x: 5 };
+    println!("xyz2: {}", xyz2.x);
 }

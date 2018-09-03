@@ -456,7 +456,7 @@ fn test_find_all_refs() {
             42,
             ReferenceParams {
                 text_document: TextDocumentIdentifier::new(url),
-                position: env.cache.mk_ls_position(src(&source_file_path, 10, "Bar")),
+                position: env.cache.mk_ls_position(src(&source_file_path, 10, "Xyz")),
                 context: ReferenceContext {
                     include_declaration: true,
                 },
