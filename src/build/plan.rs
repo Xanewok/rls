@@ -307,16 +307,14 @@ impl BuildGraph for BuildPlan {
 }
 
 fn guess_rustc_src_path(cmd: &ProcessBuilder) -> Option<PathBuf> {
-    // FIXME: RFC #2500 (Needle API) should be useful for OsStr - this function
-    // will be called often so it'd be great to avoid the transcoding overhead
-    if !cmd.get_program().to_string_lossy().ends_with("rustc") {
+    if !Path::new(cmd.get_program()).ends_with("rustc") {
         return None;
     }
 
     let file = cmd
         .get_args()
         .iter()
-        .find(|&a| a.to_string_lossy().ends_with(".rs"))?;
+        .find(|&a| Path::new(a).extension().map(|e| e == "rs").unwrap_or(false))?;
     let file_path = PathBuf::from(file);
 
     Some(match (cmd.get_cwd(), file_path.is_absolute()) {
