@@ -39,7 +39,7 @@ crate trait BuildGraph {
 }
 
 #[derive(Debug, Deserialize)]
-struct RawPlan {
+crate struct RawPlan {
     invocations: Vec<RawInvocation>,
 }
 
@@ -69,7 +69,7 @@ crate struct Invocation {
 /// Safe build plan type, invocation dependencies are guaranteed to be inside
 /// the plan.
 #[derive(Debug, Default)]
-struct BuildPlan {
+crate struct BuildPlan {
     units: HashMap<u64, Invocation>,
     deps: HashMap<u64, HashSet<u64>>,
     rev_deps: HashMap<u64, HashSet<u64>>,

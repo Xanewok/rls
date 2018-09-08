@@ -21,6 +21,7 @@ use rls_data::Analysis;
 use rls_vfs::Vfs;
 
 use self::environment::EnvironmentLock;
+use self::plan::BuildGraph;
 
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
@@ -532,18 +533,31 @@ impl Internals {
         let work = {
             let modified: Vec<_> = self.dirty_files.lock().unwrap().keys().cloned().collect();
 
-            let mut cx = self.compilation_cx.lock().unwrap();
-            let needs_to_run_cargo = cx.needs_rebuild;
-            let build_dir = cx.build_dir.as_ref().unwrap();
+            match self.config.lock().unwrap().build_plan {
+                Some(ref plan_cmd) => {
+                    let build_dir = self.compilation_cx.lock().unwrap().build_dir.clone();
+                    // FIXME: Cache this
+                    trace!("About to fetch external build plan");
+                    let plan = external::fetch_build_plan(plan_cmd, build_dir.unwrap()).unwrap();
+                    trace!("Fetched plan: {:?}", plan);
+                    plan.prepare_work(&modified)
+                },
+                // Fall back to Cargo
+                None => {
+                    let mut cx = self.compilation_cx.lock().unwrap();
+                    let needs_to_run_cargo = cx.needs_rebuild;
+                    let build_dir = cx.build_dir.as_ref().unwrap();
 
-            match important_paths::find_root_manifest_for_wd(build_dir) {
-                Ok(manifest_path) => {
-                    cx.build_plan
-                        .prepare_work(&manifest_path, &modified, needs_to_run_cargo)
-                }
-                Err(e) => {
-                    let msg = format!("Error reading manifest path: {:?}", e);
-                    return BuildResult::Err(msg, None);
+                    match important_paths::find_root_manifest_for_wd(build_dir) {
+                        Ok(manifest_path) => {
+                            cx.build_plan
+                                .prepare_work(&manifest_path, &modified, needs_to_run_cargo)
+                        }
+                        Err(e) => {
+                            let msg = format!("Error reading manifest path: {:?}", e);
+                            return BuildResult::Err(msg, None);
+                        }
+                    }
                 }
             }
         };

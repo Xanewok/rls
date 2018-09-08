@@ -526,6 +526,7 @@ fn proc_argument_value<T: AsRef<OsStr>>(prc: &ProcessBuilder, key: T) -> Option<
 
 impl fmt::Debug for JobQueue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // TODO: Assume it's rustc? build script execution has no crate name
         write!(f, "JobQueue: [")?;
         for prog in self.0.iter().rev() {
             let name = proc_argument_value(prog, "--crate-name").unwrap();
@@ -557,7 +558,8 @@ impl JobQueue {
         // returned results will replace currently held diagnostics/analyses.
         // Either allow to return a BuildResult::Squashed here or just delegate
         // to Cargo (which we do currently) in `prepare_work`
-        assert!(!self.0.is_empty());
+        // FIXME: Temporary, for the external::plan::BuildPlan
+        // assert!(!self.0.is_empty());
 
         let mut compiler_messages = vec![];
         let mut analyses = vec![];
@@ -587,6 +589,22 @@ impl JobQueue {
                 .expect("cannot stringify job program");
             args.insert(0, program.clone());
 
+            // Needed to parse rustc diagnostics
+            if args.iter().find(|x| x.as_str() == "--error-format=json").is_none() {
+                args.push("--error-format=json".to_owned());
+            }
+
+            if args.iter().find(|x| x.as_str() == "--sysroot").is_none() {
+                let sysroot = super::rustc::current_sysroot()
+                    .expect("need to specify SYSROOT env var or use rustup or multirust");
+
+                let config = internals.config.lock().unwrap();
+                if config.sysroot.is_none() {
+                    args.push("--sysroot".to_owned());
+                    args.push(sysroot);
+                }
+            }
+
             // Send a window/progress notification.
             {
                 let crate_name = proc_argument_value(&job, "--crate-name").and_then(|x| x.to_str());
@@ -608,7 +626,7 @@ impl JobQueue {
                 &internals.vfs,
                 &args,
                 job.get_envs(),
-                cwd.as_ref().map(|p| &**p),
+                cwd.as_ref().map(|p| &**p).or_else(|| job.get_cwd()), // TODO: Restructure RLS around being able to reuse job cwd instead of relying on compilation ctx
                 &build_dir,
                 Arc::clone(&internals.config),
                 &internals.env_lock.as_facade(),

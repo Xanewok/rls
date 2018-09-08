@@ -24,6 +24,22 @@ use super::BuildResult;
 use log::trace;
 use rls_data::Analysis;
 
+fn cmd_line_to_command<S: AsRef<str>>(cmd_line: &S, cwd: &Path) -> Result<Command, ()> {
+    let cmd_line = cmd_line.as_ref();
+    let (cmd, args) = {
+        let mut words = cmd_line.split_whitespace();
+        let cmd = words.next().ok_or(())?;
+        (cmd, words)
+    };
+
+    let mut cmd = Command::new(cmd);
+    cmd.args(args)
+        .current_dir(cwd)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    Ok(cmd)
+}
+
 /// Performs a build using an external command and interprets the results.
 /// The command should output on stdout a list of save-analysis .json files
 /// to be reloaded by the RLS.
@@ -34,28 +50,19 @@ pub(super) fn build_with_external_cmd<S: AsRef<str>>(
     build_dir: PathBuf,
 ) -> BuildResult {
     let cmd_line = cmd_line.as_ref();
-    let (cmd, args) = {
-        let mut words = cmd_line.split_whitespace();
-        let cmd = match words.next() {
-            Some(cmd) => cmd,
-            None => {
-                return BuildResult::Err("Specified build_command is empty".into(), None);
-            }
-        };
-        (cmd, words)
-    };
-    let spawned = Command::new(&cmd)
-        .args(args)
-        .current_dir(&build_dir)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn();
 
-    let child = match spawned {
+    let mut cmd = match cmd_line_to_command(&cmd_line, &build_dir) {
+        Ok(cmd) => cmd,
+        Err(_) => {
+            let err_msg = format!("Couldn't treat {} as command", cmd_line);
+            return BuildResult::Err(err_msg, Some(cmd_line.to_owned()));
+        }
+    };
+
+    let child = match cmd.spawn() {
         Ok(child) => child,
         Err(io) => {
             let err_msg = format!("Couldn't execute: {} ({:?})", cmd_line, io.kind());
-            trace!("{}", err_msg);
             return BuildResult::Err(err_msg, Some(cmd_line.to_owned()));
         }
     };
@@ -104,4 +111,22 @@ where
     }
 
     Ok(analyses)
+}
+
+crate fn fetch_build_plan<S: AsRef<str>>(cmd_line: S, build_dir: PathBuf) -> Result<super::plan::BuildPlan, ()> {
+    let cmd_line = cmd_line.as_ref();
+
+    let mut cmd = cmd_line_to_command(&cmd_line, &build_dir)?;
+    let child = cmd.spawn().map_err(|_| ())?;
+
+    let stdout = {
+        let mut stdout = child.stdout.ok_or(())?;
+        let mut buf = vec![];
+        stdout.read_to_end(&mut buf).map_err(|_| ())?;
+        String::from_utf8(buf).map_err(|_| ())?
+    };
+
+    let plan = serde_json::from_str::<super::plan::RawPlan>(&stdout).unwrap();
+
+    super::plan::BuildPlan::try_from_raw(plan)
 }

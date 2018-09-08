@@ -34,7 +34,6 @@ use std::ffi::OsString;
 use std::fmt::Write;
 use std::fs::{read_dir, remove_file};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
@@ -434,8 +433,8 @@ impl Executor for RlsExecutor {
             .collect();
         let envs = cargo_cmd.get_envs().clone();
 
-        let sysroot =
-            current_sysroot().expect("need to specify SYSROOT env var or use rustup or multirust");
+        let sysroot = super::rustc::current_sysroot()
+            .expect("need to specify SYSROOT env var or use rustup or multirust");
 
         {
             let config = self.config.lock().unwrap();
@@ -647,25 +646,6 @@ fn parse_arg(args: &[OsString], arg: &str) -> Option<String> {
         }
     }
     None
-}
-
-fn current_sysroot() -> Option<String> {
-    let home = env::var("RUSTUP_HOME").or_else(|_| env::var("MULTIRUST_HOME"));
-    let toolchain = env::var("RUSTUP_TOOLCHAIN").or_else(|_| env::var("MULTIRUST_TOOLCHAIN"));
-    if let (Ok(home), Ok(toolchain)) = (home, toolchain) {
-        Some(format!("{}/toolchains/{}", home, toolchain))
-    } else {
-        let rustc_exe = env::var("RUSTC").unwrap_or_else(|_| "rustc".to_owned());
-        env::var("SYSROOT").map(|s| s.to_owned()).ok().or_else(|| {
-            Command::new(rustc_exe)
-                .arg("--print")
-                .arg("sysroot")
-                .output()
-                .ok()
-                .and_then(|out| String::from_utf8(out.stdout).ok())
-                .map(|s| s.trim().to_owned())
-        })
-    }
 }
 
 /// `flag_str` is a string of command line args for Rust. This function removes any
