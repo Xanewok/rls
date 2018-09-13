@@ -36,6 +36,7 @@ crate trait BuildGraph {
     fn topological_sort(&self, units: Vec<&Self::Unit>) -> Vec<&Self::Unit>;
     // FIXME: Temporary
     fn prepare_work<T: AsRef<Path>>(&self, files: &[T]) -> WorkStatus;
+    fn rebuild(&self) -> WorkStatus;
 }
 
 #[derive(Debug, Deserialize)]
@@ -299,6 +300,14 @@ impl BuildGraph for BuildPlan {
     fn prepare_work<T: AsRef<Path>>(&self, files: &[T]) -> WorkStatus {
         let dirties = self.dirties_transitive(files);
         let topo = self.topological_sort(dirties);
+
+        let cmds = topo.into_iter().map(|unit| unit.command.clone()).collect();
+
+        WorkStatus::Execute(JobQueue::with_commands(cmds))
+    }
+
+    fn rebuild(&self) -> WorkStatus {
+        let topo = self.topological_sort(self.units());
 
         let cmds = topo.into_iter().map(|unit| unit.command.clone()).collect();
 

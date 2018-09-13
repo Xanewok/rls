@@ -535,12 +535,20 @@ impl Internals {
 
             match self.config.lock().unwrap().build_plan {
                 Some(ref plan_cmd) => {
-                    let build_dir = self.compilation_cx.lock().unwrap().build_dir.clone();
+                    let mut cx = self.compilation_cx.lock().unwrap();
+                    let build_dir = cx.build_dir.clone().unwrap();
+                    let needs_to_run_cargo = &mut cx.needs_rebuild;
                     // FIXME: Cache this
                     trace!("About to fetch external build plan");
-                    let plan = external::fetch_build_plan(plan_cmd, build_dir.unwrap()).unwrap();
+                    let plan = external::fetch_build_plan(plan_cmd, build_dir).unwrap();
                     trace!("Fetched plan: {:?}", plan);
-                    plan.prepare_work(&modified)
+
+                    if *needs_to_run_cargo {
+                        *needs_to_run_cargo = false;
+                        plan.rebuild()
+                    } else {
+                        plan.prepare_work(&modified)
+                    }
                 },
                 // Fall back to Cargo
                 None => {
@@ -550,8 +558,8 @@ impl Internals {
 
                     match important_paths::find_root_manifest_for_wd(build_dir) {
                         Ok(manifest_path) => {
-                            cx.build_plan
-                                .prepare_work(&manifest_path, &modified, needs_to_run_cargo)
+                            CargoPlan::prepare_work(&mut cx.build_plan,
+                                &manifest_path, &modified, needs_to_run_cargo)
                         }
                         Err(e) => {
                             let msg = format!("Error reading manifest path: {:?}", e);

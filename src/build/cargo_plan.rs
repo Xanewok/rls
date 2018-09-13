@@ -529,6 +529,10 @@ impl fmt::Debug for JobQueue {
         // TODO: Assume it's rustc? build script execution has no crate name
         write!(f, "JobQueue: [")?;
         for prog in self.0.iter().rev() {
+            if !Path::new(prog.get_program()).ends_with("rustc") {
+                write!(f, "{:?}, ", prog.get_program());
+                continue;
+            }
             let name = proc_argument_value(prog, "--crate-name").unwrap();
             let typ_ = proc_argument_value(prog, "--crate-type")
                 .unwrap_or_else(|| OsStr::new("<unknown>"));
@@ -626,7 +630,8 @@ impl JobQueue {
                 &internals.vfs,
                 &args,
                 job.get_envs(),
-                cwd.as_ref().map(|p| &**p).or_else(|| job.get_cwd()), // TODO: Restructure RLS around being able to reuse job cwd instead of relying on compilation ctx
+                // cwd.as_ref().map(|p| &**p).or_else(|| job.get_cwd()), // TODO: Restructure RLS around being able to reuse job cwd instead of relying on compilation ctx
+                job.get_cwd().or_else(|| cwd.as_ref().map(|p| &**p)),
                 &build_dir,
                 Arc::clone(&internals.config),
                 &internals.env_lock.as_facade(),
@@ -806,6 +811,10 @@ impl BuildGraph for CargoPlan {
     }
     // FIXME: Temporary
     fn prepare_work<T: AsRef<Path>>(&self, files: &[T]) -> WorkStatus {
+        unimplemented!()
+    }
+
+    fn rebuild(&self) -> WorkStatus {
         unimplemented!()
     }
 }

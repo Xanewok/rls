@@ -12,6 +12,10 @@ categories = ["development-tools"]
 
 build = "build.rs"
 
+[patch.crates-io]
+#rls-data = { git = "https://github.com/Xanewok/rls-data", branch = "compilation-options" }
+#rls-data = { path = "../rls-data" }
+
 [dependencies]
 cargo = { git = "https://github.com/rust-lang/cargo", rev = "9311f6d439e09da3ab918397a425be57da13f04a" }
 cargo_metadata = "0.6"
