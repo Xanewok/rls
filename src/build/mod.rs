@@ -569,7 +569,7 @@ impl Internals {
                 }
             }
         };
-        trace!("Specified work: {:?}", work);
+        trace!("Specified work: {:#?}", work);
 
         match work {
             // Cargo performs the full build and returns

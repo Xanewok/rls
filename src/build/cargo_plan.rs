@@ -55,6 +55,7 @@ fn show_key(key: &UnitKey) -> String {
 
 /// Holds the information how exactly the build will be performed for a given
 /// workspace with given, specified features.
+#[derive(Debug)]
 crate struct CargoPlan {
     /// Stores a full Cargo `Unit` data for a first processed unit with a given key.
     crate units: HashMap<UnitKey, OwnedUnit>,
@@ -506,6 +507,7 @@ impl PackageMap {
     }
 }
 
+#[derive(Debug)]
 crate struct JobQueue(Vec<ProcessBuilder>);
 
 /// Returns an immediately next argument to the one specified in a given
@@ -522,25 +524,6 @@ fn proc_argument_value<T: AsRef<OsStr>>(prc: &ProcessBuilder, key: T) -> Option<
         .find(|(_, arg)| arg.as_os_str() == key.as_ref())?;
 
     Some(args.get(idx + 1)?.as_os_str())
-}
-
-impl fmt::Debug for JobQueue {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // TODO: Assume it's rustc? build script execution has no crate name
-        write!(f, "JobQueue: [")?;
-        for prog in self.0.iter().rev() {
-            if !Path::new(prog.get_program()).ends_with("rustc") {
-                write!(f, "{:?}, ", prog.get_program());
-                continue;
-            }
-            let name = proc_argument_value(prog, "--crate-name").unwrap();
-            let typ_ = proc_argument_value(prog, "--crate-type")
-                .unwrap_or_else(|| OsStr::new("<unknown>"));
-            write!(f, "{:?} ({:?}), ", name, typ_);
-        }
-        write!(f, "]")?;
-        Ok(())
-    }
 }
 
 impl JobQueue {
@@ -578,7 +561,7 @@ impl JobQueue {
         // Go through cached compiler invocations sequentially, collecting each
         // invocation's compiler messages for diagnostics and analysis data
         while let Some(job) = self.dequeue() {
-            trace!("Executing: {:?}", job);
+            trace!("Executing: {:#?}", job);
             let mut args: Vec<_> = job
                 .get_args()
                 .iter()
@@ -675,28 +658,6 @@ fn key_from_unit(unit: &Unit<'_>) -> UnitKey {
         unit.target.clone(),
         unit.mode,
     )
-}
-
-macro_rules! print_dep_graph {
-    ($name: expr, $graph: expr, $f: expr) => {
-        $f.write_str(&format!("{}:\n", $name))?;
-        for (key, deps) in &$graph {
-            $f.write_str(&format!("{:?}\n", key))?;
-            for dep in deps {
-                $f.write_str(&format!("- {:?}\n", dep))?;
-            }
-        }
-    };
-}
-
-impl fmt::Debug for CargoPlan {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&format!("Units: {:?}\n", self.units))?;
-        print_dep_graph!("Dependency graph", self.dep_graph, f);
-        print_dep_graph!("Reverse dependency graph", self.rev_dep_graph, f);
-        f.write_str(&format!("Compiler jobs: {:?}\n", self.compiler_jobs))?;
-        Ok(())
-    }
 }
 
 #[derive(Hash, PartialEq, Eq, Debug, Clone)]
