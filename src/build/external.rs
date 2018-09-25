@@ -13,6 +13,7 @@
 //! Please note that since the command is ran externally (at a file/OS level)
 //! this doesn't work with files that are not saved.
 
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufRead;
 use std::io::Read;
@@ -20,9 +21,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use super::BuildResult;
+use super::plan::{BuildPlan, RawInvocation, RawPlan};
 
 use log::trace;
-use rls_data::Analysis;
+use rls_data::{Analysis, CompilationOptions};
 
 fn cmd_line_to_command<S: AsRef<str>>(cmd_line: &S, cwd: &Path) -> Result<Command, ()> {
     let cmd_line = cmd_line.as_ref();
@@ -48,14 +50,14 @@ fn cmd_line_to_command<S: AsRef<str>>(cmd_line: &S, cwd: &Path) -> Result<Comman
 pub(super) fn build_with_external_cmd<S: AsRef<str>>(
     cmd_line: S,
     build_dir: PathBuf,
-) -> BuildResult {
+) -> (BuildResult, Result<BuildPlan, ()>) {
     let cmd_line = cmd_line.as_ref();
 
     let mut cmd = match cmd_line_to_command(&cmd_line, &build_dir) {
         Ok(cmd) => cmd,
         Err(_) => {
             let err_msg = format!("Couldn't treat {} as command", cmd_line);
-            return BuildResult::Err(err_msg, Some(cmd_line.to_owned()));
+            return (BuildResult::Err(err_msg, Some(cmd_line.to_owned())), Err(()));
         }
     };
 
@@ -63,7 +65,7 @@ pub(super) fn build_with_external_cmd<S: AsRef<str>>(
         Ok(child) => child,
         Err(io) => {
             let err_msg = format!("Couldn't execute: {} ({:?})", cmd_line, io.kind());
-            return BuildResult::Err(err_msg, Some(cmd_line.to_owned()));
+            return (BuildResult::Err(err_msg, Some(cmd_line.to_owned())), Err(()));
         }
     };
 
@@ -78,11 +80,12 @@ pub(super) fn build_with_external_cmd<S: AsRef<str>>(
         Ok(analyses) => analyses,
         Err(cause) => {
             let err_msg = format!("Couldn't read analysis data: {}", cause);
-            return BuildResult::Err(err_msg, Some(cmd_line.to_owned()));
+            return (BuildResult::Err(err_msg, Some(cmd_line.to_owned())), Err(()));
         }
     };
 
-    BuildResult::Success(build_dir.clone(), vec![], analyses, false)
+    let plan = plan_from_analysis(&analyses, &build_dir);
+    (BuildResult::Success(build_dir, vec![], analyses, false), plan)
 }
 
 /// Reads and deserializes given save-analysis JSON files into corresponding
@@ -113,7 +116,47 @@ where
     Ok(analyses)
 }
 
-crate fn fetch_build_plan<S: AsRef<str>>(cmd_line: S, build_dir: PathBuf) -> Result<super::plan::BuildPlan, ()> {
+fn plan_from_analysis(analysis: &[Analysis], build_dir: &Path) -> Result<BuildPlan, ()> {
+    let indices: HashMap<_, usize> = analysis
+        .iter()
+        .enumerate()
+        .map(|(idx, a)| (a.prelude.as_ref().unwrap().crate_id.disambiguator, idx))
+        .collect();
+
+    let invocations: Vec<RawInvocation> = analysis.into_iter()
+        .map(|a| {
+            let CompilationOptions { ref directory, ref program, ref arguments, ref output } =
+                a.compilation.as_ref().unwrap();
+
+            let deps: Vec<usize> = a.prelude.as_ref().unwrap()
+                .external_crates
+                .iter()
+                .filter_map(|c| indices.get(&c.id.disambiguator))
+                .cloned()
+                .collect();
+
+            let cwd = match directory.is_relative() {
+                true => build_dir.join(directory),
+                false => directory.to_owned(),
+            };
+
+            Ok(RawInvocation {
+                deps,
+                outputs: vec![output.clone()],
+                program: program.clone(),
+                args: arguments.clone(),
+                env: Default::default(),
+                links: Default::default(),
+                cwd: Some(cwd)
+
+            })
+        })
+        .collect::<Result<Vec<RawInvocation>, ()>>()?;
+
+    BuildPlan::try_from_raw(RawPlan { invocations })
+}
+
+crate fn fetch_build_plan<S: AsRef<str>>(cmd_line: S, build_dir: PathBuf) -> Result<BuildPlan, ()> {
     let cmd_line = cmd_line.as_ref();
 
     let mut cmd = cmd_line_to_command(&cmd_line, &build_dir)?;
@@ -126,7 +169,7 @@ crate fn fetch_build_plan<S: AsRef<str>>(cmd_line: S, build_dir: PathBuf) -> Res
         String::from_utf8(buf).map_err(|_| ())?
     };
 
-    let plan = serde_json::from_str::<super::plan::RawPlan>(&stdout).unwrap();
+    let plan = serde_json::from_str::<RawPlan>(&stdout).unwrap();
 
-    super::plan::BuildPlan::try_from_raw(plan)
+    BuildPlan::try_from_raw(plan)
 }

@@ -41,20 +41,20 @@ crate trait BuildGraph {
 
 #[derive(Debug, Deserialize)]
 crate struct RawPlan {
-    invocations: Vec<RawInvocation>,
+    crate invocations: Vec<RawInvocation>,
 }
 
 #[derive(Debug, Deserialize)]
-struct RawInvocation {
-    deps: Vec<usize>,
-    outputs: Vec<PathBuf>,
+crate struct RawInvocation {
+    crate deps: Vec<usize>,
+    crate outputs: Vec<PathBuf>,
     #[serde(default)]
-    links: BTreeMap<PathBuf, PathBuf>,
-    program: String,
-    args: Vec<String>,
-    env: BTreeMap<String, String>,
+    crate links: BTreeMap<PathBuf, PathBuf>,
+    crate program: String,
+    crate args: Vec<String>,
+    crate env: BTreeMap<String, String>,
     #[serde(default)]
-    cwd: Option<PathBuf>,
+    crate cwd: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug)]

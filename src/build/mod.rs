@@ -522,49 +522,57 @@ impl Internals {
         // do this so we can load changed code from the VFS, rather than from
         // disk).
 
-        // Check if an override setting was provided and execute that, instead.
-        if let Some(ref cmd) = self.config.lock().unwrap().build_command {
-            let build_dir = self.compilation_cx.lock().unwrap().build_dir.clone();
-            return external::build_with_external_cmd(cmd, build_dir.unwrap());
-        }
-
         // If the build plan has already been cached, use it, unless Cargo
         // has to be specifically rerun (e.g. when build scripts changed)
         let work = {
             let modified: Vec<_> = self.dirty_files.lock().unwrap().keys().cloned().collect();
 
-            match self.config.lock().unwrap().build_plan {
-                Some(ref plan_cmd) => {
-                    let mut cx = self.compilation_cx.lock().unwrap();
-                    let build_dir = cx.build_dir.clone().unwrap();
-                    let needs_to_run_cargo = &mut cx.needs_rebuild;
-                    // FIXME: Cache this
-                    trace!("About to fetch external build plan");
-                    let plan = external::fetch_build_plan(plan_cmd, build_dir).unwrap();
-                    trace!("Fetched plan: {:?}", plan);
+            let mut cx = self.compilation_cx.lock().unwrap();
+            let build_dir = cx.build_dir.clone().unwrap();
+            let needs_rebuild = &mut cx.needs_rebuild;
 
-                    if *needs_to_run_cargo {
-                        *needs_to_run_cargo = false;
+            // Check if an external build command was provided and execute that, instead.
+            let (build_cmd, build_plan) = {
+                let config = self.config.lock().unwrap();
+                (config.build_command.clone(), config.build_plan.clone())
+            };
+
+            if let Some(cmd) = build_cmd {
+                match external::build_with_external_cmd(cmd, build_dir) {
+                    (result, Err(_)) => return result,
+                    // FIXME: Cache this plan, reuse the build result at first
+                    (result, Ok(plan)) => {
+                    trace!("Constructed plan: {:#?}", plan);
+                    if *needs_rebuild {
+                        *needs_rebuild = false;
                         plan.rebuild()
                     } else {
                         plan.prepare_work(&modified)
                     }
-                },
-                // Fall back to Cargo
-                None => {
-                    let mut cx = self.compilation_cx.lock().unwrap();
-                    let needs_to_run_cargo = cx.needs_rebuild;
-                    let build_dir = cx.build_dir.as_ref().unwrap();
+                    }
+                }
+            } else if let Some(plan_cmd) = build_plan {
+                // FIXME: Cache this
+                let plan = external::fetch_build_plan(plan_cmd, build_dir).unwrap();
+                trace!("Fetched plan: {:#?}", plan);
 
-                    match important_paths::find_root_manifest_for_wd(build_dir) {
-                        Ok(manifest_path) => {
-                            CargoPlan::prepare_work(&mut cx.build_plan,
-                                &manifest_path, &modified, needs_to_run_cargo)
-                        }
-                        Err(e) => {
-                            let msg = format!("Error reading manifest path: {:?}", e);
-                            return BuildResult::Err(msg, None);
-                        }
+                if *needs_rebuild {
+                    *needs_rebuild = false;
+                    plan.rebuild()
+                } else {
+                    plan.prepare_work(&modified)
+                }
+            // Fall back to Cargo
+            } else {
+                match important_paths::find_root_manifest_for_wd(&build_dir) {
+                    Ok(manifest_path) => {
+                        let needs_rebuild = *needs_rebuild;
+                        CargoPlan::prepare_work(&mut cx.build_plan,
+                            &manifest_path, &modified, needs_rebuild)
+                    }
+                    Err(e) => {
+                        let msg = format!("Error reading manifest path: {:?}", e);
+                        return BuildResult::Err(msg, None);
                     }
                 }
             }
