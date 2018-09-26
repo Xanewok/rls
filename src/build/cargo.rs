@@ -333,15 +333,12 @@ impl Executor for RlsExecutor {
         let plan = compilation_cx.build_plan.as_cargo_mut()
             .expect("Build plan should be properly initialized before running Cargo");
 
-        let mut primary_crate_deps = cx.dep_targets(unit);
-        primary_crate_deps.retain(|u| self.is_primary_crate(u.pkg.package_id()));
+        let primary_crate_deps = cx.dep_targets(unit)
+            .into_iter()
+            .filter(|dep| self.is_primary_crate(dep.pkg.package_id()))
+            .collect();
 
         plan.add(*unit, primary_crate_deps);
-
-        // let only_primary = |unit: &Unit<'_>| self.is_primary_crate(unit.pkg.package_id());
-        // if let Err(err) = plan.emplace_dep_with_filter(unit, cx, &only_primary) {
-        //     log::error!("{:?}", err);
-        // }
     }
 
     fn force_rebuild(&self, unit: &Unit<'_>) -> bool {

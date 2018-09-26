@@ -337,7 +337,6 @@ impl BuildGraph for ExternalPlan {
         }
     }
 
-    // FIXME: Temporary
     fn prepare_work<T: AsRef<Path>>(&self, files: &[T]) -> WorkStatus {
         let dirties = self.dirties_transitive(files);
         let topo = self.topological_sort(dirties);

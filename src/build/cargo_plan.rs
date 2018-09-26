@@ -540,7 +540,6 @@ impl JobQueue {
         // returned results will replace currently held diagnostics/analyses.
         // Either allow to return a BuildResult::Squashed here or just delegate
         // to Cargo (which we do currently) in `prepare_work`
-        // FIXME: Temporary, for the external::plan::ExternalPlan
         assert!(!self.0.is_empty());
 
         let mut compiler_messages = vec![];

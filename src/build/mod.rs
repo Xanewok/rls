@@ -533,35 +533,20 @@ impl Internals {
             let needs_rebuild = cx.needs_rebuild;
 
             // Check if an external build command was provided and execute that, instead.
-            let (build_cmd, build_plan) = {
-                let config = self.config.lock().unwrap();
-                (config.build_command.clone(), config.build_plan.clone())
-            };
-
-            if let Some(cmd) = build_cmd {
+            if let Some(cmd) = self.config.lock().unwrap().build_command.clone() {
+                // We need to rebuild; regenerate the build plan if possible.
                 if needs_rebuild || cx.build_plan.is_cargo() {
-                    let (result, plan) = match external::build_with_external_cmd(cmd, build_dir) {
+                    match external::build_with_external_cmd(cmd, build_dir) {
                         (result, Err(_)) => return result,
-                        (result, Ok(plan)) => (result, plan)
+                        (result, Ok(plan)) => {
+                            cx.needs_rebuild = false;
+                            cx.build_plan = BuildPlan::External(plan);
+                            // Since we don't support diagnostics in external
+                            // builds it might be worth rerunning the commands
+                            // ourselves again to get both analysis *and* diagnostics
+                            return result;
+                        }
                     };
-
-                    cx.build_plan = BuildPlan::External(plan);
-                    cx.needs_rebuild = false;
-                    // Since we don't support diagnostics in external builds
-                    // it might be worth rerunning the commands ourselves
-                    // again to get both analysis *and* diagnostics
-                    return result;
-                } else {
-                    cx.build_plan.as_external_mut().unwrap().prepare_work(&modified)
-                }
-            } else if let Some(plan_cmd) = build_plan {
-                if needs_rebuild || cx.build_plan.is_cargo() {
-                    // TODO: Handle unwrap
-                    let plan = external::fetch_build_plan(plan_cmd, build_dir).unwrap();
-                    cx.build_plan = BuildPlan::External(plan);
-
-                    cx.needs_rebuild = false;
-                    cx.build_plan.as_external_mut().unwrap().rebuild()
                 } else {
                     cx.build_plan.as_external_mut().unwrap().prepare_work(&modified)
                 }
@@ -576,25 +561,12 @@ impl Internals {
                         }
 
                         if needs_rebuild {
-                            // This is turned off during Executor run
-                            // TODO: Maybe we can just replace it here?
+                            // This is toggled off during Executor run
+                            // TODO: Maybe we can just do it here to keep it in one place?
                             WorkStatus::NeedsCargo(PackageArg::Default)
                         } else {
                             cx.build_plan.as_cargo_mut().unwrap().prepare_work(&modified)
                         }
-
-                        // let cargo_plan = match (needs_rebuild, &mut cx.build_plan) {
-                        //     (true,  _) |
-                        //     (false, BuildPlan::External(..)) => {
-                        //         cx.build_plan =
-                        //             BuildPlan::Cargo(CargoPlan::with_manifest(&manifest_path));
-
-                        //         cx.build_plan.as_cargo_mut().unwrap()
-                        //     },
-                        //     (false, BuildPlan::Cargo(ref mut plan)) => plan,
-                        // };
-
-                        // cargo_plan.prepare_work(&modified)
                     }
                     Err(e) => {
                         let msg = format!("Error reading manifest path: {:?}", e);
@@ -606,8 +578,6 @@ impl Internals {
         trace!("Specified work: {:#?}", work);
 
         match work {
-            // Cargo performs the full build and returns
-            // appropriate diagnostics/analysis data
             WorkStatus::NeedsCargo(package_arg) => cargo::cargo(self, package_arg, progress_sender),
             WorkStatus::Execute(job_queue) => job_queue.execute(self, progress_sender),
         }

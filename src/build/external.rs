@@ -126,7 +126,7 @@ fn plan_from_analysis(analysis: &[Analysis], build_dir: &Path) -> Result<Externa
     let invocations: Vec<RawInvocation> = analysis.into_iter()
         .map(|a| {
             let CompilationOptions { ref directory, ref program, ref arguments, ref output } =
-                a.compilation.as_ref().unwrap();
+                a.compilation.as_ref().ok_or(())?;
 
             let deps: Vec<usize> = a.prelude.as_ref().unwrap()
                 .external_crates
@@ -154,22 +154,4 @@ fn plan_from_analysis(analysis: &[Analysis], build_dir: &Path) -> Result<Externa
         .collect::<Result<Vec<RawInvocation>, ()>>()?;
 
     ExternalPlan::try_from_raw(RawPlan { invocations })
-}
-
-crate fn fetch_build_plan<S: AsRef<str>>(cmd_line: S, build_dir: PathBuf) -> Result<ExternalPlan, ()> {
-    let cmd_line = cmd_line.as_ref();
-
-    let mut cmd = cmd_line_to_command(&cmd_line, &build_dir)?;
-    let child = cmd.spawn().map_err(|_| ())?;
-
-    let stdout = {
-        let mut stdout = child.stdout.ok_or(())?;
-        let mut buf = vec![];
-        stdout.read_to_end(&mut buf).map_err(|_| ())?;
-        String::from_utf8(buf).map_err(|_| ())?
-    };
-
-    let plan = serde_json::from_str::<RawPlan>(&stdout).map_err(|_| ())?;
-
-    ExternalPlan::try_from_raw(plan)
 }

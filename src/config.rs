@@ -167,8 +167,6 @@ pub struct Config {
     ///
     /// Implies `build_on_save`: true.
     pub build_command: Option<String>,
-    /// TODO:
-    pub build_plan: Option<String>,
 }
 
 impl Default for Config {
@@ -199,7 +197,6 @@ impl Default for Config {
             show_hover_context: true,
             rustfmt_path: None,
             build_command: None,
-            build_plan: None,
         };
         result.normalise();
         result
@@ -238,7 +235,6 @@ impl Config {
             self.cfg_test = false;
             self.rustfmt_path = None;
             self.build_command = None;
-            self.build_plan = None;
         // } else if self.build_command.is_some() {
             // self.build_on_save = true;
         }
