@@ -238,8 +238,9 @@ impl Config {
             self.cfg_test = false;
             self.rustfmt_path = None;
             self.build_command = None;
-        } else if self.build_command.is_some() {
-            self.build_on_save = true;
+            self.build_plan = None;
+        // } else if self.build_command.is_some() {
+            // self.build_on_save = true;
         }
     }
 

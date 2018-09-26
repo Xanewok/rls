@@ -55,7 +55,7 @@ fn show_key(key: &UnitKey) -> String {
 
 /// Holds the information how exactly the build will be performed for a given
 /// workspace with given, specified features.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 crate struct CargoPlan {
     /// Stores a full Cargo `Unit` data for a first processed unit with a given key.
     crate units: HashMap<UnitKey, OwnedUnit>,
@@ -74,18 +74,17 @@ crate struct CargoPlan {
 }
 
 impl CargoPlan {
-    crate fn new() -> CargoPlan {
-        Self::for_packages(HashSet::new())
+    crate fn with_manifest(manifest_path: &Path) -> CargoPlan {
+        CargoPlan {
+            package_map: Some(PackageMap::new(manifest_path)),
+            ..Default::default()
+        }
     }
 
-    crate fn for_packages(pkgs: HashSet<String>) -> CargoPlan {
+    crate fn with_packages(manifest_path: &Path, pkgs: HashSet<String>) -> CargoPlan {
         CargoPlan {
-            units: HashMap::new(),
-            dep_graph: HashMap::new(),
-            rev_dep_graph: HashMap::new(),
-            compiler_jobs: HashMap::new(),
-            package_map: None,
             built_packages: pkgs,
+            ..Self::with_manifest(manifest_path)
         }
     }
 
@@ -336,15 +335,11 @@ impl CargoPlan {
 
     crate fn prepare_work<T: AsRef<Path> + fmt::Debug>(
         &mut self,
-        manifest_path: &Path,
         modified: &[T],
-        requested_cargo: bool,
     ) -> WorkStatus {
-        if self.package_map.is_none() || requested_cargo {
-            self.package_map = Some(PackageMap::new(manifest_path));
-        }
+        assert!(self.package_map.is_some());
 
-        if !self.is_ready() || requested_cargo {
+        if !self.is_ready() {
             return WorkStatus::NeedsCargo(PackageArg::Default);
         }
 
@@ -545,8 +540,8 @@ impl JobQueue {
         // returned results will replace currently held diagnostics/analyses.
         // Either allow to return a BuildResult::Squashed here or just delegate
         // to Cargo (which we do currently) in `prepare_work`
-        // FIXME: Temporary, for the external::plan::BuildPlan
-        // assert!(!self.0.is_empty());
+        // FIXME: Temporary, for the external::plan::ExternalPlan
+        assert!(!self.0.is_empty());
 
         let mut compiler_messages = vec![];
         let mut analyses = vec![];
@@ -613,7 +608,6 @@ impl JobQueue {
                 &internals.vfs,
                 &args,
                 job.get_envs(),
-                // cwd.as_ref().map(|p| &**p).or_else(|| job.get_cwd()), // TODO: Restructure RLS around being able to reuse job cwd instead of relying on compilation ctx
                 job.get_cwd().or_else(|| cwd.as_ref().map(|p| &**p)),
                 &build_dir,
                 Arc::clone(&internals.config),
@@ -771,7 +765,7 @@ impl BuildGraph for CargoPlan {
             .collect()
     }
     // FIXME: Temporary
-    fn prepare_work<T: AsRef<Path>>(&self, files: &[T]) -> WorkStatus {
+    fn prepare_work<T: AsRef<Path>>(&self, _: &[T]) -> WorkStatus {
         unimplemented!()
     }
 

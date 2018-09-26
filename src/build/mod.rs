@@ -42,6 +42,7 @@ pub mod plan;
 mod rustc;
 
 use self::cargo_plan::{CargoPlan, WorkStatus};
+use crate::build::plan::BuildPlan;
 
 /// Manages builds.
 ///
@@ -144,8 +145,8 @@ struct CompilationContext {
     /// Whether needs to perform a Cargo rebuild
     needs_rebuild: bool,
     /// Build plan, which should know all the inter-package/target dependencies
-    /// along with args/envs. Only contains inter-package dep-graph for now.
-    build_plan: CargoPlan,
+    /// along with args/envs.
+    build_plan: BuildPlan,
 }
 
 impl CompilationContext {
@@ -154,7 +155,7 @@ impl CompilationContext {
             cwd: None,
             build_dir: None,
             needs_rebuild: true,
-            build_plan: CargoPlan::new(),
+            build_plan: BuildPlan::new(),
         }
     }
 }
@@ -529,7 +530,7 @@ impl Internals {
 
             let mut cx = self.compilation_cx.lock().unwrap();
             let build_dir = cx.build_dir.clone().unwrap();
-            let needs_rebuild = &mut cx.needs_rebuild;
+            let needs_rebuild = cx.needs_rebuild;
 
             // Check if an external build command was provided and execute that, instead.
             let (build_cmd, build_plan) = {
@@ -538,37 +539,62 @@ impl Internals {
             };
 
             if let Some(cmd) = build_cmd {
-                match external::build_with_external_cmd(cmd, build_dir) {
-                    (result, Err(_)) => return result,
-                    // FIXME: Cache this plan, reuse the build result at first
-                    (result, Ok(plan)) => {
-                    trace!("Constructed plan: {:#?}", plan);
-                    if *needs_rebuild {
-                        *needs_rebuild = false;
-                        plan.rebuild()
-                    } else {
-                        plan.prepare_work(&modified)
-                    }
-                    }
+                if needs_rebuild || cx.build_plan.is_cargo() {
+                    let (result, plan) = match external::build_with_external_cmd(cmd, build_dir) {
+                        (result, Err(_)) => return result,
+                        (result, Ok(plan)) => (result, plan)
+                    };
+
+                    cx.build_plan = BuildPlan::External(plan);
+                    cx.needs_rebuild = false;
+                    // Since we don't support diagnostics in external builds
+                    // it might be worth rerunning the commands ourselves
+                    // again to get both analysis *and* diagnostics
+                    return result;
+                } else {
+                    cx.build_plan.as_external_mut().unwrap().prepare_work(&modified)
                 }
             } else if let Some(plan_cmd) = build_plan {
-                // FIXME: Cache this
-                let plan = external::fetch_build_plan(plan_cmd, build_dir).unwrap();
-                trace!("Fetched plan: {:#?}", plan);
+                if needs_rebuild || cx.build_plan.is_cargo() {
+                    // TODO: Handle unwrap
+                    let plan = external::fetch_build_plan(plan_cmd, build_dir).unwrap();
+                    cx.build_plan = BuildPlan::External(plan);
 
-                if *needs_rebuild {
-                    *needs_rebuild = false;
-                    plan.rebuild()
+                    cx.needs_rebuild = false;
+                    cx.build_plan.as_external_mut().unwrap().rebuild()
                 } else {
-                    plan.prepare_work(&modified)
+                    cx.build_plan.as_external_mut().unwrap().prepare_work(&modified)
                 }
             // Fall back to Cargo
             } else {
                 match important_paths::find_root_manifest_for_wd(&build_dir) {
                     Ok(manifest_path) => {
-                        let needs_rebuild = *needs_rebuild;
-                        CargoPlan::prepare_work(&mut cx.build_plan,
-                            &manifest_path, &modified, needs_rebuild)
+                        // Reinitialize so it's proper when running cargo::cargo
+                        if needs_rebuild || cx.build_plan.is_external() {
+                            cx.build_plan =
+                                BuildPlan::Cargo(CargoPlan::with_manifest(&manifest_path));
+                        }
+
+                        if needs_rebuild {
+                            // This is turned off during Executor run
+                            // TODO: Maybe we can just replace it here?
+                            WorkStatus::NeedsCargo(PackageArg::Default)
+                        } else {
+                            cx.build_plan.as_cargo_mut().unwrap().prepare_work(&modified)
+                        }
+
+                        // let cargo_plan = match (needs_rebuild, &mut cx.build_plan) {
+                        //     (true,  _) |
+                        //     (false, BuildPlan::External(..)) => {
+                        //         cx.build_plan =
+                        //             BuildPlan::Cargo(CargoPlan::with_manifest(&manifest_path));
+
+                        //         cx.build_plan.as_cargo_mut().unwrap()
+                        //     },
+                        //     (false, BuildPlan::Cargo(ref mut plan)) => plan,
+                        // };
+
+                        // cargo_plan.prepare_work(&modified)
                     }
                     Err(e) => {
                         let msg = format!("Error reading manifest path: {:?}", e);

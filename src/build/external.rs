@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use super::BuildResult;
-use super::plan::{BuildPlan, RawInvocation, RawPlan};
+use super::plan::{ExternalPlan, RawInvocation, RawPlan};
 
 use log::trace;
 use rls_data::{Analysis, CompilationOptions};
@@ -50,7 +50,7 @@ fn cmd_line_to_command<S: AsRef<str>>(cmd_line: &S, cwd: &Path) -> Result<Comman
 pub(super) fn build_with_external_cmd<S: AsRef<str>>(
     cmd_line: S,
     build_dir: PathBuf,
-) -> (BuildResult, Result<BuildPlan, ()>) {
+) -> (BuildResult, Result<ExternalPlan, ()>) {
     let cmd_line = cmd_line.as_ref();
 
     let mut cmd = match cmd_line_to_command(&cmd_line, &build_dir) {
@@ -116,7 +116,7 @@ where
     Ok(analyses)
 }
 
-fn plan_from_analysis(analysis: &[Analysis], build_dir: &Path) -> Result<BuildPlan, ()> {
+fn plan_from_analysis(analysis: &[Analysis], build_dir: &Path) -> Result<ExternalPlan, ()> {
     let indices: HashMap<_, usize> = analysis
         .iter()
         .enumerate()
@@ -153,10 +153,10 @@ fn plan_from_analysis(analysis: &[Analysis], build_dir: &Path) -> Result<BuildPl
         })
         .collect::<Result<Vec<RawInvocation>, ()>>()?;
 
-    BuildPlan::try_from_raw(RawPlan { invocations })
+    ExternalPlan::try_from_raw(RawPlan { invocations })
 }
 
-crate fn fetch_build_plan<S: AsRef<str>>(cmd_line: S, build_dir: PathBuf) -> Result<BuildPlan, ()> {
+crate fn fetch_build_plan<S: AsRef<str>>(cmd_line: S, build_dir: PathBuf) -> Result<ExternalPlan, ()> {
     let cmd_line = cmd_line.as_ref();
 
     let mut cmd = cmd_line_to_command(&cmd_line, &build_dir)?;
@@ -169,7 +169,7 @@ crate fn fetch_build_plan<S: AsRef<str>>(cmd_line: S, build_dir: PathBuf) -> Res
         String::from_utf8(buf).map_err(|_| ())?
     };
 
-    let plan = serde_json::from_str::<RawPlan>(&stdout).unwrap();
+    let plan = serde_json::from_str::<RawPlan>(&stdout).map_err(|_| ())?;
 
-    BuildPlan::try_from_raw(plan)
+    ExternalPlan::try_from_raw(plan)
 }

@@ -7,6 +7,7 @@ use cargo::util::{process, ProcessBuilder};
 use serde_derive::Deserialize;
 
 use super::cargo_plan::{JobQueue, WorkStatus};
+use super::cargo_plan::CargoPlan;
 
 crate trait BuildKey {
     type Key: Eq + Hash;
@@ -37,6 +38,46 @@ crate trait BuildGraph {
     // FIXME: Temporary
     fn prepare_work<T: AsRef<Path>>(&self, files: &[T]) -> WorkStatus;
     fn rebuild(&self) -> WorkStatus;
+}
+
+#[derive(Debug)]
+crate enum BuildPlan {
+    External(ExternalPlan),
+    Cargo(CargoPlan)
+}
+
+impl BuildPlan {
+    pub fn new() -> BuildPlan {
+        BuildPlan::Cargo(Default::default())
+    }
+
+    pub fn is_cargo(&self) -> bool {
+        match self {
+            BuildPlan::Cargo(..) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_external(&self) -> bool {
+        match self {
+            BuildPlan::External(..) => true,
+            _ => false,
+        }
+    }
+
+    pub fn as_cargo_mut(&mut self) -> Option<&mut CargoPlan> {
+        match self {
+            BuildPlan::Cargo(plan) => Some(plan),
+            _ => None,
+        }
+    }
+
+    pub fn as_external_mut(&mut self) -> Option<&mut ExternalPlan> {
+        match self {
+            BuildPlan::External(plan) => Some(plan),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -70,7 +111,7 @@ crate struct Invocation {
 /// Safe build plan type, invocation dependencies are guaranteed to be inside
 /// the plan.
 #[derive(Debug, Default)]
-crate struct BuildPlan {
+crate struct ExternalPlan {
     units: HashMap<u64, Invocation>,
     deps: HashMap<u64, HashSet<u64>>,
     rev_deps: HashMap<u64, HashSet<u64>>,
@@ -116,20 +157,20 @@ impl From<RawInvocation> for Invocation {
     }
 }
 
-impl BuildPlan {
-    crate fn new() -> BuildPlan {
+impl ExternalPlan {
+    crate fn new() -> ExternalPlan {
         Default::default()
     }
 
-    crate fn with_units(units: Vec<Invocation>) -> BuildPlan {
-        let mut plan = BuildPlan::new();
+    crate fn with_units(units: Vec<Invocation>) -> ExternalPlan {
+        let mut plan = ExternalPlan::new();
         for unit in &units {
             for &dep in &unit.deps {
                 plan.add_dep(unit.key(), units[dep].key());
             }
         }
 
-        BuildPlan {
+        ExternalPlan {
             units: units.into_iter().map(|u| (u.key(), u)).collect(),
             ..plan
         }
@@ -141,7 +182,7 @@ impl BuildPlan {
         self.rev_deps.entry(dep).or_insert_with(HashSet::new).insert(key);
     }
 
-    crate fn try_from_raw(raw: RawPlan) -> Result<BuildPlan, ()> {
+    crate fn try_from_raw(raw: RawPlan) -> Result<ExternalPlan, ()> {
         // Sanity check, each dependency (index) has to be inside the build plan
         if raw
             .invocations
@@ -154,11 +195,11 @@ impl BuildPlan {
 
         let units: Vec<Invocation> = raw.invocations.into_iter().map(|x| x.into()).collect();
 
-        Ok(BuildPlan::with_units(units))
+        Ok(ExternalPlan::with_units(units))
     }
 }
 
-impl BuildGraph for BuildPlan {
+impl BuildGraph for ExternalPlan {
     type Unit = Invocation;
 
     fn units(&self) -> Vec<&Self::Unit> {
@@ -342,7 +383,7 @@ mod tests {
     /// Helper struct that prints sorted unit source directories in a given plan.
     struct SrcPaths<'a>(Vec<&'a PathBuf>);
     impl<'a> SrcPaths<'a> {
-        fn from(plan: &BuildPlan) -> SrcPaths<'_> {
+        fn from(plan: &ExternalPlan) -> SrcPaths<'_> {
             SrcPaths(
                 plan.units()
                     .iter()
@@ -394,7 +435,7 @@ mod tests {
             { "deps": [0], "program": "rustc", "args": ["--crate-name", "repo", "/my/repo/src/lib.rs"], "env": {}, "outputs": [] }
         ]}"#;
         let plan = serde_json::from_str::<RawPlan>(&plan).unwrap();
-        let plan = BuildPlan::try_from_raw(plan).unwrap();
+        let plan = ExternalPlan::try_from_raw(plan).unwrap();
 
         eprintln!("src_paths: {}", &SrcPaths::from(&plan));
 
@@ -419,7 +460,7 @@ mod tests {
             { "deps": [0], "program": "rustc", "args": ["--crate-name", "repo", "/my/repo/src/lib.rs"], "env": {}, "outputs": [] }
         ]}"#;
         let plan = serde_json::from_str::<RawPlan>(&plan).unwrap();
-        let plan = BuildPlan::try_from_raw(plan).unwrap();
+        let plan = ExternalPlan::try_from_raw(plan).unwrap();
 
         eprintln!("src_paths: {}", &SrcPaths::from(&plan));
         eprintln!("plan: {:?}", &plan);
@@ -446,7 +487,7 @@ mod tests {
             { "deps": [0], "program": "rustc", "args": ["--crate-name", "repo", "/my/repo/src/lib.rs"], "env": {}, "outputs": [] }
         ]}"#;
         let plan = serde_json::from_str::<RawPlan>(&plan).unwrap();
-        let plan = BuildPlan::try_from_raw(plan).unwrap();
+        let plan = ExternalPlan::try_from_raw(plan).unwrap();
 
         eprintln!("src_paths: {}", &SrcPaths::from(&plan));
         eprintln!("plan: {:?}", &plan);

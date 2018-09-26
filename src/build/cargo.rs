@@ -21,6 +21,7 @@ use serde_json;
 
 use crate::actions::progress::ProgressUpdate;
 use crate::build::cargo_plan::CargoPlan;
+use crate::build::plan::BuildPlan;
 use crate::build::environment::{self, Environment, EnvironmentLock};
 use crate::build::{BufWriter, BuildResult, CompilationContext, Internals, PackageArg};
 use crate::config::Config;
@@ -187,7 +188,7 @@ fn run_cargo(
 
     // Since Cargo build routine will try to regenerate the unit dep graph,
     // we need to clear the existing dep graph.
-    compilation_cx.lock().unwrap().build_plan = CargoPlan::for_packages(pkg_names);
+    compilation_cx.lock().unwrap().build_plan = BuildPlan::Cargo(CargoPlan::with_packages(&manifest_path, pkg_names));
 
     let compile_opts = CompileOptions {
         spec,
@@ -329,7 +330,8 @@ impl Executor for RlsExecutor {
         use crate::build::plan::BuildGraph;
 
         let mut compilation_cx = self.compilation_cx.lock().unwrap();
-        let plan = &mut compilation_cx.build_plan;
+        let plan = compilation_cx.build_plan.as_cargo_mut()
+            .expect("Build plan should be properly initialized before running Cargo");
 
         let mut primary_crate_deps = cx.dep_targets(unit);
         primary_crate_deps.retain(|u| self.is_primary_crate(u.pkg.package_id()));
@@ -496,7 +498,8 @@ impl Executor for RlsExecutor {
         // Cache executed command for the build plan
         {
             let mut cx = self.compilation_cx.lock().unwrap();
-            cx.build_plan.cache_compiler_job(id, target, mode, &cmd);
+            let plan = cx.build_plan.as_cargo_mut().unwrap();
+            plan.cache_compiler_job(id, target, mode, &cmd);
         }
 
         // Prepare modified cargo-generated args/envs for future rustc calls
