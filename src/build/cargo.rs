@@ -20,10 +20,10 @@ use failure::{self, format_err};
 use serde_json;
 
 use crate::actions::progress::ProgressUpdate;
-use crate::build::cargo_plan::CargoPlan;
-use crate::build::plan::BuildPlan;
-use crate::build::environment::{self, Environment, EnvironmentLock};
 use crate::build::{BufWriter, BuildResult, CompilationContext, Internals, PackageArg};
+use crate::build::cargo_plan::CargoPlan;
+use crate::build::environment::{self, Environment, EnvironmentLock};
+use crate::build::plan::{BuildGraph, BuildPlan};
 use crate::config::Config;
 use log::{debug, trace, warn};
 use rls_data::Analysis;
@@ -328,8 +328,6 @@ impl Executor for RlsExecutor {
     /// the work is actually executed). This is called even for a target that
     /// is fresh and won't be compiled.
     fn init(&self, cx: &Context<'_, '_>, unit: &Unit<'_>) {
-        use crate::build::plan::BuildGraph;
-
         let mut compilation_cx = self.compilation_cx.lock().unwrap();
         let plan = compilation_cx.build_plan.as_cargo_mut()
             .expect("Build plan should be properly initialized before running Cargo");

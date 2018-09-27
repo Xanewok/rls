@@ -10,18 +10,12 @@
 
 //! Running builds as-needed for the server to answer questions.
 
-pub use self::cargo::make_cargo_config;
-
-use ::cargo::util::important_paths;
 use crate::actions::post_build::PostBuildHandler;
 use crate::actions::progress::{ProgressNotifier, ProgressUpdate};
 use crate::config::Config;
 use log::trace;
 use rls_data::Analysis;
 use rls_vfs::Vfs;
-
-use self::environment::EnvironmentLock;
-use self::plan::BuildGraph;
 
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
@@ -38,11 +32,11 @@ mod cargo_plan;
 pub mod environment;
 mod external;
 // TODO: pub? only cargo_plan should see that for now
-pub mod plan;
+mod plan;
 mod rustc;
 
-use self::plan::{BuildPlan, WorkStatus};
-use self::cargo_plan::CargoPlan;
+use self::plan::{BuildGraph, BuildPlan, WorkStatus};
+use self::environment::EnvironmentLock;
 
 /// Manages builds.
 ///
@@ -534,9 +528,12 @@ impl Internals {
 
             // Check if an external build command was provided and execute that, instead.
             if let Some(cmd) = self.config.lock().unwrap().build_command.clone() {
-                // We need to rebuild; regenerate the build plan if possible.
-                if needs_rebuild || cx.build_plan.is_cargo() {
-                    match external::build_with_external_cmd(cmd, build_dir) {
+                match (needs_rebuild, &cx.build_plan) {
+                    (false, BuildPlan::External(ref plan)) => {
+                        plan.prepare_work(&modified)
+                    },
+                    // We need to rebuild; regenerate the build plan if possible.
+                    _ => match external::build_with_external_cmd(cmd, build_dir) {
                         (result, Err(_)) => return result,
                         (result, Ok(plan)) => {
                             cx.needs_rebuild = false;
@@ -546,31 +543,23 @@ impl Internals {
                             // ourselves again to get both analysis *and* diagnostics
                             return result;
                         }
-                    };
-                } else {
-                    cx.build_plan.as_external_mut().unwrap().prepare_work(&modified)
+                    },
                 }
             // Fall back to Cargo
             } else {
-                match important_paths::find_root_manifest_for_wd(&build_dir) {
-                    Ok(manifest_path) => {
-                        // Reinitialize so it's proper when running cargo::cargo
-                        if needs_rebuild || cx.build_plan.is_external() {
-                            cx.build_plan =
-                                BuildPlan::Cargo(CargoPlan::with_manifest(&manifest_path));
+                // Cargo plan is recreated and `needs_rebuild` reset if we run cargo::cargo().
+                match cx.build_plan {
+                    BuildPlan::External(_) => {
+                        WorkStatus::NeedsCargo(PackageArg::Default)
+                    },
+                    BuildPlan::Cargo(ref plan) => {
+                        match plan.prepare_work(&modified) {
+                            // Don't reuse the plan if we need to rebuild
+                            WorkStatus::Execute(_) if needs_rebuild => {
+                                WorkStatus::NeedsCargo(PackageArg::Default)
+                            },
+                            work @ _ => work,
                         }
-
-                        if needs_rebuild {
-                            // This is toggled off during Executor run
-                            // TODO: Maybe we can just do it here to keep it in one place?
-                            WorkStatus::NeedsCargo(PackageArg::Default)
-                        } else {
-                            cx.build_plan.as_cargo_mut().unwrap().prepare_work(&modified)
-                        }
-                    }
-                    Err(e) => {
-                        let msg = format!("Error reading manifest path: {:?}", e);
-                        return BuildResult::Err(msg, None);
                     }
                 }
             }

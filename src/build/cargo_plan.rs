@@ -32,23 +32,19 @@ use std::sync::Mutex;
 use cargo::core::compiler::{CompileMode, Context, Kind, Unit};
 use cargo::core::profiles::Profile;
 use cargo::core::{PackageId, Target, TargetKind};
-use cargo::util::{CargoResult, ProcessBuilder};
+use cargo::util::ProcessBuilder;
 use cargo_metadata;
 use log::{debug, error, trace};
 use url::Url;
 
 use crate::build::PackageArg;
-use crate::build::plan::{JobQueue, WorkStatus};
+use crate::build::plan::{BuildKey, BuildGraph, JobQueue, WorkStatus};
 use crate::lsp_data::parse_file_path;
 
 /// Main key type by which `Unit`s will be distinguished in the build plan.
 /// In Target we're mostly interested in TargetKind (Lib, Bin, ...) and name
 /// (e.g. we can have 2 binary targets with different names).
 crate type UnitKey = (PackageId, Target, CompileMode);
-fn show_key(key: &UnitKey) -> String {
-    let (target, mode) = (&key.1, &key.2);
-    format!("({}, {:?}, {}, {:?})", target.name(), target.kind(), target.src_path().path().display(), mode)
-}
 
 /// Holds the information how exactly the build will be performed for a given
 /// workspace with given, specified features.
@@ -108,7 +104,7 @@ impl CargoPlan {
     /// Emplace a given `Unit`, along with its `Unit` dependencies (recursively)
     /// into the dependency graph.
     #[allow(dead_code)]
-    crate fn emplace_dep(&mut self, unit: &Unit<'_>, cx: &Context<'_, '_>) -> CargoResult<()> {
+    crate fn emplace_dep(&mut self, unit: &Unit<'_>, cx: &Context<'_, '_>) {
         let null_filter = |_unit: &Unit<'_>| true;
         self.emplace_dep_with_filter(unit, cx, &null_filter)
     }
@@ -121,20 +117,19 @@ impl CargoPlan {
         unit: &Unit<'_>,
         cx: &Context<'_, '_>,
         filter: &Filter,
-    ) -> CargoResult<()>
+    )
     where
         Filter: Fn(&Unit<'_>) -> bool,
     {
-        debug!("cargo_plan::emplace_dep_with: Adding unit: ({:?}) {:?} {}", show_key(&key_from_unit(unit)), unit, if filter(unit) { "(passed)" } else { "(omitted)"} );
         if !filter(unit) {
-            return Ok(());
+            return;
         }
 
         let key = key_from_unit(unit);
         self.units.entry(key.clone()).or_insert_with(|| (*unit).into());
         // Process only those units, which are not yet in the dep graph.
         if self.dep_graph.get(&key).is_some() {
-            return Ok(());
+            return;
         }
 
         // Keep all the additional Unit information for a given unit (It's
@@ -168,10 +163,8 @@ impl CargoPlan {
 
         // Recursively process other remaining forward dependencies.
         for unit in units {
-            debug!("cargo_plan::emplace_dep_with:  Adding dep: ({:?}) {:?}", show_key(&key_from_unit(&unit)), unit);
-            self.emplace_dep_with_filter(&unit, cx, filter)?;
+            self.emplace_dep_with_filter(&unit, cx, filter);
         }
-        Ok(())
     }
 
     /// TODO: Improve detecting dirty crate targets for a set of dirty file paths.
@@ -320,7 +313,6 @@ impl CargoPlan {
             if visited.contains(unit) {
                 return;
             } else {
-                debug!("cargo_plan::topolo::dfs: visiting: {:?}", show_key(unit));
                 visited.insert(unit.clone());
                 for neighbour in graph.get(unit).into_iter().flat_map(|nodes| nodes) {
                     dfs(neighbour, graph, visited, output);
@@ -334,9 +326,7 @@ impl CargoPlan {
         &self,
         modified: &[T],
     ) -> WorkStatus {
-        assert!(self.package_map.is_some());
-
-        if !self.is_ready() {
+        if !self.is_ready() || self.package_map.is_none() {
             return WorkStatus::NeedsCargo(PackageArg::Default);
         }
 
@@ -523,9 +513,6 @@ impl<'a> From<Unit<'a>> for OwnedUnit {
     }
 }
 
-// TODO: Finish implementing BuildGraph for CargoPlan
-use crate::build::plan::{BuildGraph, BuildKey};
-
 impl BuildKey for OwnedUnit {
     type Key = UnitKey;
 
@@ -555,8 +542,6 @@ impl BuildGraph for CargoPlan {
 
     fn add<T: Into<Self::Unit>>(&mut self, unit: T, deps: Vec<T>) {
         let unit = unit.into();
-        debug!("cargo_plan::add: Adding unit: {:?} {:?}", show_key(&unit.key()), unit);
-
         // Units can depend on others with different Targets or Profiles
         // (e.g. different `run_custom_build`) despite having the same UnitKey.
         // We coalesce them here while creating the UnitKey dep graph.
@@ -564,14 +549,8 @@ impl BuildGraph for CargoPlan {
         let deps = deps.into_iter().map(|d| d.into()).filter(|dep| unit.key() != dep.key());
 
         for dep in deps {
-            debug!("cargo_plan::add:  Adding dep: {:?} {:?}", show_key(&dep.key()), dep);
             self.dep_graph.entry(unit.key()).or_insert_with(HashSet::new).insert(dep.key());
             self.rev_dep_graph.entry(dep.key()).or_insert_with(HashSet::new).insert(unit.key());
-
-            debug!("cargo_plan::add:  rdeps4 dep: {:?}", show_key(&dep.key()));
-            for rdep in &self.rev_dep_graph[&dep.key()] {
-            debug!("cargo_plan::add:   rdep: {:?}", show_key(&rdep));
-            }
 
             self.units.entry(dep.key()).or_insert(dep);
         }
@@ -611,9 +590,5 @@ impl BuildGraph for CargoPlan {
 
     fn prepare_work<T: AsRef<Path> + std::fmt::Debug>(&self, files: &[T]) -> WorkStatus {
         CargoPlan::prepare_work(self, files)
-    }
-
-    fn rebuild(&self) -> WorkStatus {
-        unimplemented!()
     }
 }

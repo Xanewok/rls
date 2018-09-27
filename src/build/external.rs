@@ -8,27 +8,34 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-//! Performs a build using a provided black-box build command, which ought to
-//! return a list of save-analysis JSON files to be reloaded by the RLS.
-//! Please note that since the command is ran externally (at a file/OS level)
-//! this doesn't work with files that are not saved.
+//! Contains data and logic for executing builds specified externally (rather
+//! than executing and intercepting Cargo calls).
+//!
+//! Provides deserialization structs for the build plan format as it is output
+//! by `cargo build --build-plan` and means to execute that plan as part of the
+//! RLS build to retrieve diagnostics and analysis data.
+//!
+//! Additionally, we allow to build the analysis data with an external command,
+//! which should return a list of save-analysis JSON files to be reloaded by RLS.
+//! From these we construct an internal build plan that is used to rebuild
+//! the project incrementally ourselves.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use std::fs::File;
+use std::hash::{Hash, Hasher};
 use std::io::BufRead;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use crate::build::BuildResult;
 use crate::build::plan::{BuildKey, BuildGraph, JobQueue, WorkStatus};
-use super::BuildResult;
 
-use serde_derive::Deserialize;
+use cargo::util::{process, ProcessBuilder};
 use log::trace;
 use rls_data::{Analysis, CompilationOptions};
-use cargo::util::{process, ProcessBuilder};
+use serde_derive::Deserialize;
 
 fn cmd_line_to_command<S: AsRef<str>>(cmd_line: &S, cwd: &Path) -> Result<Command, ()> {
     let cmd_line = cmd_line.as_ref();
@@ -314,7 +321,6 @@ impl BuildGraph for ExternalPlan {
             self.units.entry(dep.key()).or_insert(dep);
         }
 
-        // TODO: default rdeps is necessary in cargo_plan, do we need it here?
         self.rev_deps.entry(unit.key()).or_insert_with(HashSet::new);
         self.units.entry(unit.key()).or_insert(unit);
     }
@@ -426,14 +432,6 @@ impl BuildGraph for ExternalPlan {
 
         WorkStatus::Execute(JobQueue::with_commands(cmds))
     }
-
-    fn rebuild(&self) -> WorkStatus {
-        let topo = self.topological_sort(self.units());
-
-        let cmds = topo.into_iter().map(|unit| unit.command.clone()).collect();
-
-        WorkStatus::Execute(JobQueue::with_commands(cmds))
-    }
 }
 
 fn guess_rustc_src_path(cmd: &ProcessBuilder) -> Option<PathBuf> {
@@ -458,9 +456,20 @@ fn guess_rustc_src_path(cmd: &ProcessBuilder) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fmt;
+
+    trait Sorted {
+        fn sorted(self) -> Self;
+    }
+
+    impl<T: Ord> Sorted for Vec<T> {
+        fn sorted(mut self: Self) -> Self {
+            self.sort();
+            self
+        }
+    }
 
     /// Helper struct that prints sorted unit source directories in a given plan.
+    #[derive(Debug)]
     struct SrcPaths<'a>(Vec<&'a PathBuf>);
     impl<'a> SrcPaths<'a> {
         fn from(plan: &ExternalPlan) -> SrcPaths<'_> {
@@ -473,39 +482,12 @@ mod tests {
         }
     }
 
-    impl<'a> fmt::Display for SrcPaths<'a> {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            let mut sorted = self.0.clone();
-            sorted.sort();
-            writeln!(f, "[")?;
-            for src_path in sorted {
-                write!(f, "  {}, \n", src_path.display())?;
-            }
-            writeln!(f, "]")?;
-            Ok(())
-        }
-    }
-
     fn paths<'a>(invocations: &Vec<&'a Invocation>) -> Vec<&'a str> {
         invocations
             .iter()
             .filter_map(|d| d.src_path.as_ref())
             .map(|p| p.to_str().unwrap())
             .collect()
-    }
-
-    trait Sorted {
-        fn sorted(self) -> Self;
-    }
-
-    impl<T> Sorted for Vec<T>
-    where
-        T: Ord,
-    {
-        fn sorted(mut self: Self) -> Self {
-            self.sort();
-            self
-        }
     }
 
     #[test]
@@ -517,7 +499,7 @@ mod tests {
         let plan = serde_json::from_str::<RawPlan>(&plan).unwrap();
         let plan = ExternalPlan::try_from_raw(plan).unwrap();
 
-        eprintln!("src_paths: {}", &SrcPaths::from(&plan));
+        eprintln!("src_paths: {:#?}", &SrcPaths::from(&plan));
 
         let dirties = |file: &str| -> Vec<&str> {
             plan.dirties(&[file])
@@ -542,7 +524,7 @@ mod tests {
         let plan = serde_json::from_str::<RawPlan>(&plan).unwrap();
         let plan = ExternalPlan::try_from_raw(plan).unwrap();
 
-        eprintln!("src_paths: {}", &SrcPaths::from(&plan));
+        eprintln!("src_paths: {:#?}", &SrcPaths::from(&plan));
         eprintln!("plan: {:?}", &plan);
 
         assert_eq!(
@@ -569,7 +551,7 @@ mod tests {
         let plan = serde_json::from_str::<RawPlan>(&plan).unwrap();
         let plan = ExternalPlan::try_from_raw(plan).unwrap();
 
-        eprintln!("src_paths: {}", &SrcPaths::from(&plan));
+        eprintln!("src_paths: {:#?}", &SrcPaths::from(&plan));
         eprintln!("plan: {:?}", &plan);
 
         let units_to_rebuild = plan.dirties_transitive(&["/my/repo/file.rs"]);
@@ -580,7 +562,7 @@ mod tests {
 
         // TODO: Test on non-trivial input, use Iterator::position if
         // nondeterminate order wrt hashing is a problem
-        // Jobs that have to run first are *last* in the topological sorting
+        // Jobs that have to run first are *last* in the topological sorting here
         let topo_units = plan.topological_sort(units_to_rebuild);
         assert_eq!(
             paths(&topo_units),

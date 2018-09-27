@@ -1,4 +1,9 @@
-//! 
+//! Specified a notion of a build graph, which ultimately can be queried as to
+//! what work is required (either a list of `rustc` invocations or a rebuild
+//! request) for a given set of dirty files.
+//! Currently, there are 2 types of build plans:
+//! * Cargo - used when we run Cargo in-process and intercept it
+//! * External - dependency graph between invocations
 
 use std::hash::Hash;
 use std::path::{Path, PathBuf};
@@ -39,7 +44,6 @@ crate trait BuildGraph {
     /// from the last element.
     fn topological_sort(&self, units: Vec<&Self::Unit>) -> Vec<&Self::Unit>;
     fn prepare_work<T: AsRef<Path> + std::fmt::Debug>(&self, files: &[T]) -> WorkStatus;
-    fn rebuild(&self) -> WorkStatus;
 }
 
 #[derive(Debug)]
@@ -59,30 +63,9 @@ impl BuildPlan {
         BuildPlan::Cargo(Default::default())
     }
 
-    pub fn is_cargo(&self) -> bool {
-        match self {
-            BuildPlan::Cargo(..) => true,
-            _ => false,
-        }
-    }
-
-    pub fn is_external(&self) -> bool {
-        match self {
-            BuildPlan::External(..) => true,
-            _ => false,
-        }
-    }
-
     pub fn as_cargo_mut(&mut self) -> Option<&mut CargoPlan> {
         match self {
             BuildPlan::Cargo(plan) => Some(plan),
-            _ => None,
-        }
-    }
-
-    pub fn as_external_mut(&mut self) -> Option<&mut ExternalPlan> {
-        match self {
-            BuildPlan::External(plan) => Some(plan),
             _ => None,
         }
     }
