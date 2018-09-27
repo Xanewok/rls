@@ -25,24 +25,21 @@
 //! build scripts).
 
 use std::collections::{HashMap, HashSet};
-use std::ffi::OsStr;
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::Sender;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 use cargo::core::compiler::{CompileMode, Context, Kind, Unit};
 use cargo::core::profiles::Profile;
 use cargo::core::{PackageId, Target, TargetKind};
 use cargo::util::{CargoResult, ProcessBuilder};
 use cargo_metadata;
-use crate::build::PackageArg;
-use crate::lsp_data::parse_file_path;
 use log::{debug, error, trace};
 use url::Url;
 
-use super::{BuildResult, Internals};
-use crate::actions::progress::ProgressUpdate;
+use crate::build::PackageArg;
+use crate::build::plan::{JobQueue, WorkStatus};
+use crate::lsp_data::parse_file_path;
 
 /// Main key type by which `Unit`s will be distinguished in the build plan.
 /// In Target we're mostly interested in TargetKind (Lib, Bin, ...) and name
@@ -334,7 +331,7 @@ impl CargoPlan {
     }
 
     crate fn prepare_work<T: AsRef<Path> + fmt::Debug>(
-        &mut self,
+        &self,
         modified: &[T],
     ) -> WorkStatus {
         assert!(self.package_map.is_some());
@@ -406,17 +403,11 @@ impl CargoPlan {
                 None => WorkStatus::NeedsCargo(PackageArg::Default),
                 Some(jobs) => {
                     assert!(!jobs.is_empty());
-                    WorkStatus::Execute(JobQueue(jobs))
+                    WorkStatus::Execute(JobQueue::with_commands(jobs))
                 }
             }
         }
     }
-}
-
-#[derive(Debug)]
-crate enum WorkStatus {
-    NeedsCargo(PackageArg),
-    Execute(JobQueue),
 }
 
 /// Maps paths to packages.
@@ -502,149 +493,6 @@ impl PackageMap {
     }
 }
 
-#[derive(Debug)]
-crate struct JobQueue(Vec<ProcessBuilder>);
-
-/// Returns an immediately next argument to the one specified in a given
-/// ProcessBuilder (or `None` if the searched or the next argument could not be found).
-///
-/// This is useful for returning values for arguments of `--key <value>` format.
-/// For example, if `[.., "--crate-name", "rls", ...]` arguments are specified,
-/// then proc_arg(prc, "--crate-name") returns Some(&OsStr::new("rls"));
-fn proc_argument_value<T: AsRef<OsStr>>(prc: &ProcessBuilder, key: T) -> Option<&std::ffi::OsStr> {
-    let args = prc.get_args();
-    let (idx, _) = args
-        .iter()
-        .enumerate()
-        .find(|(_, arg)| arg.as_os_str() == key.as_ref())?;
-
-    Some(args.get(idx + 1)?.as_os_str())
-}
-
-impl JobQueue {
-    crate fn with_commands(jobs: Vec<ProcessBuilder>) -> JobQueue {
-        JobQueue(jobs)
-    }
-
-    crate fn dequeue(&mut self) -> Option<ProcessBuilder> {
-        self.0.pop()
-    }
-
-    /// Performs a rustc build using cached compiler invocations.
-    pub(super) fn execute(
-        mut self,
-        internals: &Internals,
-        progress_sender: Sender<ProgressUpdate>,
-    ) -> BuildResult {
-        // TODO: In case of an empty job queue we shouldn't be here, since the
-        // returned results will replace currently held diagnostics/analyses.
-        // Either allow to return a BuildResult::Squashed here or just delegate
-        // to Cargo (which we do currently) in `prepare_work`
-        assert!(!self.0.is_empty());
-
-        let mut compiler_messages = vec![];
-        let mut analyses = vec![];
-        let (build_dir, mut cwd) = {
-            let comp_cx = internals.compilation_cx.lock().unwrap();
-            (
-                comp_cx.build_dir.clone().expect("no build directory"),
-                comp_cx.cwd.clone(),
-            )
-        };
-
-        // Go through cached compiler invocations sequentially, collecting each
-        // invocation's compiler messages for diagnostics and analysis data
-        while let Some(job) = self.dequeue() {
-            trace!("Executing: {:#?}", job);
-            let mut args: Vec<_> = job
-                .get_args()
-                .iter()
-                .cloned()
-                .map(|x| x.into_string().expect("cannot stringify job args"))
-                .collect();
-
-            let program = job
-                .get_program()
-                .clone()
-                .into_string()
-                .expect("cannot stringify job program");
-            args.insert(0, program.clone());
-
-            // Needed to parse rustc diagnostics
-            if args.iter().find(|x| x.as_str() == "--error-format=json").is_none() {
-                args.push("--error-format=json".to_owned());
-            }
-
-            if args.iter().find(|x| x.as_str() == "--sysroot").is_none() {
-                let sysroot = super::rustc::current_sysroot()
-                    .expect("need to specify SYSROOT env var or use rustup or multirust");
-
-                let config = internals.config.lock().unwrap();
-                if config.sysroot.is_none() {
-                    args.push("--sysroot".to_owned());
-                    args.push(sysroot);
-                }
-            }
-
-            // Send a window/progress notification.
-            {
-                let crate_name = proc_argument_value(&job, "--crate-name").and_then(|x| x.to_str());
-                let update = match crate_name {
-                    Some(name) => ProgressUpdate::Message(name.to_owned()),
-                    None => {
-                        // divide by zero is avoided by earlier assert!
-                        let percentage = compiler_messages.len() as f64 / self.0.len() as f64;
-                        ProgressUpdate::Percentage(percentage)
-                    }
-                };
-
-                progress_sender
-                    .send(update)
-                    .expect("Failed to send progress update");
-            }
-
-            match super::rustc::rustc(
-                &internals.vfs,
-                &args,
-                job.get_envs(),
-                job.get_cwd().or_else(|| cwd.as_ref().map(|p| &**p)),
-                &build_dir,
-                Arc::clone(&internals.config),
-                &internals.env_lock.as_facade(),
-            ) {
-                BuildResult::Success(c, mut messages, mut analysis, success) => {
-                    compiler_messages.append(&mut messages);
-                    analyses.append(&mut analysis);
-                    cwd = Some(c);
-
-                    // This compilation failed, but the build as a whole does not
-                    // need to error out.
-                    if !success {
-                        return BuildResult::Success(
-                            cwd.unwrap(),
-                            compiler_messages,
-                            analyses,
-                            false,
-                        );
-                    }
-                }
-                BuildResult::Err(cause, _) => {
-                    let cmd = format!("{} {}", program, args.join(" "));
-                    return BuildResult::Err(cause, Some(cmd));
-                }
-                _ => {}
-            }
-        }
-
-        BuildResult::Success(
-            cwd.unwrap_or_else(|| PathBuf::from(".")),
-            compiler_messages,
-            analyses,
-            true,
-        )
-    }
-}
-
 fn key_from_unit(unit: &Unit<'_>) -> UnitKey {
     (
         unit.pkg.package_id().clone(),
@@ -705,10 +553,7 @@ impl BuildGraph for CargoPlan {
             .unwrap_or_default()
     }
 
-    fn add<T>(&mut self, unit: T, deps: Vec<T>)
-    where
-        T: Into<Self::Unit>
-    {
+    fn add<T: Into<Self::Unit>>(&mut self, unit: T, deps: Vec<T>) {
         let unit = unit.into();
         debug!("cargo_plan::add: Adding unit: {:?} {:?}", show_key(&unit.key()), unit);
 
@@ -763,9 +608,9 @@ impl BuildGraph for CargoPlan {
             .map(|key| self.units.get(key).expect("topological_sort"))
             .collect()
     }
-    // FIXME: Temporary
-    fn prepare_work<T: AsRef<Path>>(&self, _: &[T]) -> WorkStatus {
-        unimplemented!()
+
+    fn prepare_work<T: AsRef<Path> + std::fmt::Debug>(&self, files: &[T]) -> WorkStatus {
+        CargoPlan::prepare_work(self, files)
     }
 
     fn rebuild(&self) -> WorkStatus {

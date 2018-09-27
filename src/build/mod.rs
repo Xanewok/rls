@@ -41,8 +41,8 @@ mod external;
 pub mod plan;
 mod rustc;
 
-use self::cargo_plan::{CargoPlan, WorkStatus};
-use crate::build::plan::BuildPlan;
+use self::plan::{BuildPlan, WorkStatus};
+use self::cargo_plan::CargoPlan;
 
 /// Manages builds.
 ///

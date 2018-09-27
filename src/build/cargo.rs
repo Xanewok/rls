@@ -188,7 +188,8 @@ fn run_cargo(
 
     // Since Cargo build routine will try to regenerate the unit dep graph,
     // we need to clear the existing dep graph.
-    compilation_cx.lock().unwrap().build_plan = BuildPlan::Cargo(CargoPlan::with_packages(&manifest_path, pkg_names));
+    compilation_cx.lock().unwrap().build_plan =
+        BuildPlan::Cargo(CargoPlan::with_packages(&manifest_path, pkg_names));
 
     let compile_opts = CompileOptions {
         spec,
