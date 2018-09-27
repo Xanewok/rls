@@ -23,7 +23,7 @@ use crate::actions::progress::ProgressUpdate;
 use crate::build::{BufWriter, BuildResult, CompilationContext, Internals, PackageArg};
 use crate::build::cargo_plan::CargoPlan;
 use crate::build::environment::{self, Environment, EnvironmentLock};
-use crate::build::plan::{BuildGraph, BuildPlan};
+use crate::build::plan::BuildPlan;
 use crate::config::Config;
 use log::{debug, trace, warn};
 use rls_data::Analysis;
@@ -332,12 +332,9 @@ impl Executor for RlsExecutor {
         let plan = compilation_cx.build_plan.as_cargo_mut()
             .expect("Build plan should be properly initialized before running Cargo");
 
-        let primary_crate_deps = cx.dep_targets(unit)
-            .into_iter()
-            .filter(|dep| self.is_primary_crate(dep.pkg.package_id()))
-            .collect();
+        let only_primary = |unit: &Unit<'_>| self.is_primary_crate(unit.pkg.package_id());
 
-        plan.add(*unit, primary_crate_deps);
+        plan.emplace_dep_with_filter(unit, cx, &only_primary);
     }
 
     fn force_rebuild(&self, unit: &Unit<'_>) -> bool {

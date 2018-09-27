@@ -102,14 +102,6 @@ impl CargoPlan {
     }
 
     /// Emplace a given `Unit`, along with its `Unit` dependencies (recursively)
-    /// into the dependency graph.
-    #[allow(dead_code)]
-    crate fn emplace_dep(&mut self, unit: &Unit<'_>, cx: &Context<'_, '_>) {
-        let null_filter = |_unit: &Unit<'_>| true;
-        self.emplace_dep_with_filter(unit, cx, &null_filter)
-    }
-
-    /// Emplace a given `Unit`, along with its `Unit` dependencies (recursively)
     /// into the dependency graph as long as the passed `Unit` isn't filtered
     /// out by the `filter` closure.
     crate fn emplace_dep_with_filter<Filter>(
