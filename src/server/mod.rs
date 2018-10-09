@@ -33,7 +33,7 @@ pub use languageserver_types::request::Shutdown as ShutdownRequest;
 use languageserver_types::{
     CodeLensOptions, CompletionOptions, ExecuteCommandOptions, ImplementationProviderCapability,
     InitializeParams, InitializeResult, ServerCapabilities, TextDocumentSyncCapability,
-    TextDocumentSyncKind,
+    TextDocumentSyncKind, CodeActionProviderCapability, RenameProviderCapability,
 };
 use log::{debug, error, trace, warn};
 use rls_analysis::AnalysisHost;
@@ -372,7 +372,7 @@ fn server_caps(ctx: &ActionContext) -> ServerCapabilities {
         document_highlight_provider: Some(true),
         document_symbol_provider: Some(true),
         workspace_symbol_provider: Some(true),
-        code_action_provider: Some(true),
+        code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
         document_formatting_provider: Some(true),
         execute_command_provider: Some(ExecuteCommandOptions {
             // We append our pid to the command so that if there are multiple
@@ -383,7 +383,7 @@ fn server_caps(ctx: &ActionContext) -> ServerCapabilities {
                 format!("rls.deglobImports-{}", ctx.pid()),
             ],
         }),
-        rename_provider: Some(true),
+        rename_provider: Some(RenameProviderCapability::Simple(true)),
         color_provider: None,
 
         // These are supported if the `unstable_features` option is set.
@@ -396,6 +396,8 @@ fn server_caps(ctx: &ActionContext) -> ServerCapabilities {
         }),
         document_on_type_formatting_provider: None,
         signature_help_provider: None,
+        folding_range_provider: None, // TODO
+        workspace: None,
     }
 }
 
@@ -432,6 +434,7 @@ mod test {
                 experimental: None,
             },
             trace: Some(languageserver_types::TraceOption::Off),
+            workspace_folders: None
         }
     }
 

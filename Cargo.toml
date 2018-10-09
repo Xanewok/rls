@@ -12,6 +12,9 @@ categories = ["development-tools"]
 
 build = "build.rs"
 
+[patch.crates-io]
+rls-analysis = { path = "../rls-analysis" }
+
 [dependencies]
 cargo = { git = "https://github.com/rust-lang/cargo", rev = "04cec5fc10a7bbe1dccaad5729eff1823ef2608c" }
 cargo_metadata = "0.6"
@@ -20,7 +23,7 @@ env_logger = "0.5"
 failure = "0.1.1"
 itertools = "0.7.3"
 jsonrpc-core = "8.0.1"
-languageserver-types = "0.45"
+languageserver-types = "0.51"
 lazy_static = "1"
 log = "0.4"
 num_cpus = "1"

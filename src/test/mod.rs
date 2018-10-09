@@ -55,6 +55,7 @@ fn initialize_with_opts(
             experimental: None,
         },
         trace: Some(TraceOption::Off),
+        workspace_folders: None,
     };
     Request {
         id: RequestId::Num(id as u64),
@@ -1392,6 +1393,7 @@ fn test_deglob() {
                 range: env.cache.mk_ls_range_from_line(12),
                 context: CodeActionContext {
                     diagnostics: vec![],
+                    only: None, // TODO
                 },
             },
         ).to_string(),
@@ -1419,6 +1421,7 @@ fn test_deglob() {
                 range: env.cache.mk_ls_range_from_line(15),
                 context: CodeActionContext {
                     diagnostics: vec![],
+                    only: None, // TODO
                 },
             },
         ).to_string(),

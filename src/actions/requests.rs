@@ -36,7 +36,7 @@ use rls_analysis::SymbolQuery;
 use crate::lsp_data::request::ApplyWorkspaceEdit;
 pub use crate::lsp_data::request::{
     CodeActionRequest as CodeAction, CodeLensRequest, Completion,
-    DocumentHighlightRequest as DocumentHighlight, DocumentSymbol as Symbols, ExecuteCommand,
+    DocumentHighlightRequest as DocumentHighlight, DocumentSymbolRequest as Symbols, ExecuteCommand,
     Formatting, GotoDefinition as Definition, GotoImplementation as Implementation,
     HoverRequest as Hover, RangeFormatting, References, Rename,
     ResolveCompletionItem as ResolveCompletion, WorkspaceSymbol,
@@ -85,6 +85,7 @@ impl RequestAction for WorkspaceSymbol {
                         container_name: d.parent
                             .and_then(|id| analysis.get_def(id).ok())
                             .map(|parent| parent.name),
+                        deprecated: None,
                     }
                 })
                 .collect())
@@ -92,10 +93,12 @@ impl RequestAction for WorkspaceSymbol {
 }
 
 impl RequestAction for Symbols {
-    type Response = Vec<SymbolInformation>;
+    // type Response = Vec<SymbolInformation>;
+    // type Response = <Symbols as lsp_data::request::Request>::Result;
+    type Response = Option<lsp_data::DocumentSymbolResponse>;
 
     fn fallback_response() -> Result<Self::Response, ResponseError> {
-        Ok(vec![])
+        Ok(None)
     }
 
     fn handle(
@@ -108,20 +111,47 @@ impl RequestAction for Symbols {
 
         let symbols = analysis.symbols(&file_path).unwrap_or_else(|_| vec![]);
 
-        Ok(symbols
+        debug!("Symbols::handle: Symbols: {:?}", symbols);
+        fn to_symbol(analysis: &rls_analysis::Analysis, id: rls_analysis::Id, def: &rls_analysis::Def) -> DocumentSymbol {
+            debug!("Symbols::handle: to_symbol(id: {:?}, name: {}) start", id, def.name);
+            let out = DocumentSymbol {
+                name: def.name.clone(),
+                detail: None, // TODO (e.g. signature if a function)
+                kind: source_kind_from_def_kind(def.kind),
+                range: ls_util::rls_to_range(def.span.range),
+                selection_range: ls_util::rls_to_range(def.span.range),
+                children: Some(analysis.for_each_child(id, |id, def| to_symbol(analysis, id, def)).unwrap_or_default()),
+                deprecated: None,
+            };
+            debug!("Symbols::handle: to_symbol(id: {:?}, name: {}) stop", id, def.name);
+            out
+        }
+
+        let analysis = analysis.try_lock().unwrap();
+
+        Ok(Some(languageserver_types::DocumentSymbolResponse::Nested(
+            symbols
             .into_iter()
             .filter(|s| {
                 let range = ls_util::rls_to_range(s.span.range);
                 range.start != range.end
-            }).map(|s| SymbolInformation {
-                name: s.name,
-                kind: source_kind_from_def_kind(s.kind),
-                location: ls_util::rls_to_location(&s.span),
-                container_name: s
-                    .parent
-                    .and_then(|id| analysis.get_def(id).ok())
-                    .map(|parent| parent.name),
+            })
+            .inspect(|s| debug!("Symbols::handle: mapping symbol: {:?}", s))
+            .map(|s| {
+                let id = s.id;
+                DocumentSymbol {
+                    name: s.name,
+                    detail: None, // TODO (e.g. signature if a function)
+                    kind: source_kind_from_def_kind(s.kind),
+                    range: ls_util::rls_to_range(s.span.range),
+                    selection_range: ls_util::rls_to_range(s.span.range),
+                    children: analysis.as_ref().map(|analysis| analysis.for_each_child(id,
+                            |id, def| to_symbol(analysis, id, def)))
+                        .unwrap_or_default(),
+                    deprecated: None,
+                }
             }).collect())
+        ))
     }
 }
 
