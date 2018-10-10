@@ -31,6 +31,14 @@ fn rls_timeout() -> Duration {
     })
 }
 
+fn rfind_diagnostics_with_uri(stdout: &RlsStdout, uri_end: &str) -> serde_json::Value {
+    stdout
+        .to_json_messages()
+        .filter(|json| json["method"] == "textDocument/publishDiagnostics")
+        .rfind(|json| json["params"]["uri"].as_str().unwrap().ends_with(uri_end))
+        .unwrap()
+}
+
 #[test]
 fn cmd_test_infer_bin() {
     let p = project("simple_workspace")
@@ -290,17 +298,6 @@ fn cmd_changing_workspace_lib_retains_bin_diagnostics() {
     )
     .unwrap();
 
-    let to_publish_messages = |stdout: &RlsStdout| {
-        stdout
-            .to_json_messages()
-            .filter(|json| json["method"] == "textDocument/publishDiagnostics")
-    };
-    let rfind_diagnostics_with_uri = |stdout, uri_end| {
-        to_publish_messages(stdout)
-            .rfind(|json| json["params"]["uri"].as_str().unwrap().ends_with(uri_end))
-            .unwrap()
-    };
-
     let stdout = rls.wait_until_done_indexing(rls_timeout());
 
     let lib_diagnostic = rfind_diagnostics_with_uri(&stdout, "library/src/lib.rs");
@@ -413,6 +410,242 @@ fn cmd_changing_workspace_lib_retains_bin_diagnostics() {
     );
 
     rls.shutdown(rls_timeout());
+}
+
+/// Tests whether a project with a Cargo build script is compiled correctly and
+/// that modifying it triggers a project rebuild.
+#[test]
+fn modified_build_script_rebuilds_project() {
+    let p = project("simple_workspace")
+        .file(
+            "Cargo.toml",
+            r#"
+                [workspace]
+                members = [
+                "crate_a",
+                "crate_b",
+                ]
+            "#,
+        )
+        .file(
+            "crate_a/Cargo.toml",
+            r#"
+                [package]
+                name = "crate_a"
+                version = "0.1.0"
+                authors = ["Igor Matuszewski <Xanewok@gmail.com>"]
+            "#,
+        )
+        .file(
+            "crate_a/build.rs",
+            r#"
+                use std::io::Write;
+
+                fn main() {
+                    let output = std::process::Command::new("echo").args(&["mystring"]).output().unwrap();
+
+                    let out_dir = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
+                    let mut f = std::fs::File::create(out_dir.join("file.txt")).unwrap();
+                    f.write_all(&output.stdout).unwrap();
+                }
+
+            "#,
+        )
+        .file(
+            "crate_a/src/lib.rs",
+            r#"
+                const BUILT_STRING: &'static str = include_str!(concat!(env!("OUT_DIR"), "/file.txt"));
+
+                struct StructA;
+            "#,
+        )
+        .file(
+            "crate_b/Cargo.toml",
+            r#"
+                [package]
+                name = "crate_b"
+                version = "0.1.0"
+                authors = ["Igor Matuszewski <Xanewok@gmail.com>"]
+
+                [dependencies]
+                crate_a = { path = "../crate_a" }
+            "#,
+        )
+        .file(
+            "crate_b/src/main.rs",
+            r#"
+
+                struct StructB;
+            "#,
+        )
+        .build();
+
+    let root_path = p.root();
+    let mut rls = p.spawn_rls();
+
+    rls.request(
+        0,
+        "initialize",
+        Some(json!({
+            "rootPath": root_path,
+            "capabilities": {}
+        })),
+    )
+    .unwrap();
+
+    let stdout = rls.wait_until_done_indexing(rls_timeout());
+    let json: Vec<_> = stdout.to_json_messages().collect();
+    assert!(json.len() >= 11);
+
+    assert!(json[0]["result"]["capabilities"].is_object());
+
+    assert_eq!(json[1]["method"], "window/progress");
+    assert_eq!(json[1]["params"]["title"], "Building");
+    assert_eq!(json[1]["params"].get("message"), None);
+
+    let crates = ["build_script_build", "crate_a", "crate_a", "crate_b", "crate_b"];
+    for (json, &crate_name) in json[2..crates.len()].iter().zip(crates.iter()) {
+        assert_eq!(json["method"], "window/progress");
+        assert_eq!(json["params"]["title"], "Building");
+        assert!(
+            json["params"]["message"]
+                .as_str()
+                .unwrap()
+                .starts_with(crate_name)
+        );
+    }
+
+    assert_eq!(json[7]["method"], "window/progress");
+    assert_eq!(json[7]["params"]["done"], true);
+    assert_eq!(json[7]["params"]["title"], "Building");
+
+    assert_eq!(json[8]["method"], "window/progress");
+    assert_eq!(json[8]["params"]["title"], "Indexing");
+
+    assert_eq!(json[9]["method"], "textDocument/publishDiagnostics");
+    assert_eq!(json[10]["method"], "textDocument/publishDiagnostics");
+
+    for msg in &[
+        "constant item is never used: `BUILT_STRING`",
+        "struct is never constructed: `StructB`",
+    ] {
+        &json[9..11]
+            .iter()
+            .flat_map(|json| json["params"]["diagnostics"].as_array().unwrap())
+            .any(|diag| diag["message"].as_str().unwrap().contains(msg));
+    }
+
+    assert_eq!(json[11]["method"], "window/progress");
+    assert_eq!(json[11]["params"]["done"], true);
+    assert_eq!(json[11]["params"]["title"], "Indexing");
+
+    rls.notify(
+        "textDocument/didChange",
+        Some(json!({
+                "contentChanges": [
+                    {
+                        "range": {
+                            "start": { "line": 1, "character": 1 },
+                            "end": { "line": 1, "character": 1 }
+                        },
+                        "rangeLength": 0,
+                        "text": ""
+                    }
+                ],
+                "textDocument": {
+                    "uri": format!("file://{}/crate_b/src/main.rs", root_path.as_path().display()),
+                    "version": 1
+                }
+            })),
+    )
+    .unwrap();
+
+    let stdout = rls.wait_until_done_indexing_n(2, rls_timeout());
+
+    // Unfortunately we do what Cargo does - we display diagnostics only for
+    // rebuilt dirty work (which is only crate_b in this case)
+    let a_diagnostic = rfind_diagnostics_with_uri(&stdout, "crate_a/src/lib.rs");
+    assert_eq!(a_diagnostic["params"]["diagnostics"], json!([]));
+    let b_diagnostic = rfind_diagnostics_with_uri(&stdout, "crate_b/src/main.rs");
+    assert!(
+        b_diagnostic["params"]["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("struct is never constructed: `StructB`")
+    );
+
+    // Touch build script, triggering project rebuild
+    rls.notify(
+        "textDocument/didChange",
+        Some(json!({
+                "contentChanges": [
+                    {
+                        "range": {
+                            "start": { "line": 1, "character": 1 },
+                            "end": { "line": 1, "character": 1 }
+                        },
+                        "rangeLength": 0,
+                        "text": ""
+                    }
+                ],
+                "textDocument": {
+                    "uri": format!("file://{}/crate_a/build.rs", root_path.as_path().display()),
+                    "version": 1
+                }
+            })),
+    )
+    .unwrap();
+
+    let stdout = rls.wait_until_done_indexing_n(3, rls_timeout());
+    let json: Vec<_> = stdout.to_json_messages().collect();
+
+    assert_eq!(json[20]["method"], "window/progress");
+    assert_eq!(json[20]["params"]["title"], "Building");
+    assert_eq!(json[20]["params"].get("message"), None);
+
+    // Every crate transitively depending on the build script gets rebuilt
+    for (json, &crate_name) in json[21..21 + crates.len()].iter().zip(crates.iter()) {
+        assert_eq!(json["method"], "window/progress");
+        assert_eq!(json["params"]["title"], "Building");
+        assert!(
+            json["params"]["message"]
+                .as_str()
+                .unwrap()
+                .starts_with(crate_name)
+        );
+    }
+
+    assert_eq!(json[26]["method"], "window/progress");
+    assert_eq!(json[26]["params"]["done"], true);
+    assert_eq!(json[26]["params"]["title"], "Building");
+
+    assert_eq!(json[27]["method"], "window/progress");
+    assert_eq!(json[27]["params"]["title"], "Indexing");
+
+    assert_eq!(json[28]["method"], "textDocument/publishDiagnostics");
+    assert_eq!(json[29]["method"], "textDocument/publishDiagnostics");
+
+    for msg in &[
+        "constant item is never used: `BUILT_STRING`",
+        "struct is never constructed: `StructB`",
+    ] {
+        &json[28..30]
+            .iter()
+            .flat_map(|json| json["params"]["diagnostics"].as_array().unwrap())
+            .any(|diag| diag["message"].as_str().unwrap().contains(msg));
+    }
+
+    assert_eq!(json[30]["method"], "window/progress");
+    assert_eq!(json[30]["params"]["done"], true);
+    assert_eq!(json[30]["params"]["title"], "Indexing");
+
+    let json = rls
+        .shutdown(rls_timeout())
+        .to_json_messages()
+        .nth(31)
+        .expect("No shutdown response received");
+
+    assert_eq!(json["id"], 99999);
 }
 
 #[test]
