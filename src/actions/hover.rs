@@ -767,7 +767,7 @@ fn racer_def(ctx: &InitActionContext, span: &Span<ZeroIndexed>) -> Option<Def> {
 fn format_object(rustfmt: Rustfmt, fmt_config: &FmtConfig, the_type: String) -> String {
     debug!("format_object: {}", the_type);
     let mut config = fmt_config.get_rustfmt_config().clone();
-    config.set().newline_style(NewlineStyle::Unix);
+    config.set().newline_style(NewlineStyle::Native);
     let trimmed = the_type.trim();
 
     // Normalize the ending for rustfmt
@@ -835,7 +835,7 @@ fn format_method(rustfmt: Rustfmt, fmt_config: &FmtConfig, the_type: String) -> 
     let the_type = the_type.trim().trim_right_matches(';').to_string();
 
     let mut config = fmt_config.get_rustfmt_config().clone();
-    config.set().newline_style(NewlineStyle::Unix);
+    config.set().newline_style(NewlineStyle::Native);
     let tab_spaces = config.tab_spaces();
 
     let method = format!("impl Dummy {{ {} {{ unimplemented!() }} }}", the_type);
