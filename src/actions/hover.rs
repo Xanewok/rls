@@ -781,6 +781,7 @@ fn format_object(rustfmt: Rustfmt, fmt_config: &FmtConfig, the_type: String) -> 
     } else {
         format!("{}{{}}", trimmed)
     };
+    eprintln!("format_object: object: {:#?}", object);
 
     let formatted = match rustfmt.format(object.clone(), config) {
         Ok(lines) => match lines.rfind('{') {
@@ -824,6 +825,7 @@ fn format_object(rustfmt: Rustfmt, fmt_config: &FmtConfig, the_type: String) -> 
         // not a tuple or unit struct
         formatted
     };
+    eprintln!("format_object: result: {:#?}", result);
 
     result.trim().into()
 }
@@ -839,7 +841,7 @@ fn format_method(rustfmt: Rustfmt, fmt_config: &FmtConfig, the_type: String) -> 
     let tab_spaces = config.tab_spaces();
 
     let method = format!("impl Dummy {{ {} {{ unimplemented!() }} }}", the_type);
-
+    eprintln!("format_method: method: {:#?}", method);
     let result = match rustfmt.format(method.clone(), config) {
         Ok(mut lines) => {
             if let Some(front_pos) = lines.find('{') {
@@ -866,6 +868,7 @@ fn format_method(rustfmt: Rustfmt, fmt_config: &FmtConfig, the_type: String) -> 
             the_type
         }
     };
+    eprintln!("format_method: result: {:#?}", result.trim());
 
     result.trim().into()
 }
