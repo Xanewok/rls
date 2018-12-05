@@ -27,5 +27,6 @@ script:
 env:
   global:
   - RUSTFLAGS=--cfg=enable_tooltip_tests
-  - RUST_BACKTRACE=1
+  - RUST_BACKTRACE=full
+  - RUST_LOG=rustfmt-nightly
   - RLS_TEST_WAIT_FOR_AGES=1
