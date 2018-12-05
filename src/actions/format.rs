@@ -23,7 +23,7 @@ use rustfmt_nightly::{Config, Input, Session};
 use serde_json;
 
 /// Specified which `rustfmt` to use.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Rustfmt {
     /// (Path to external `rustfmt`, cwd where it should be spawned at)
     External(PathBuf, PathBuf),
@@ -42,10 +42,14 @@ impl From<Option<(String, PathBuf)>> for Rustfmt {
 
 impl Rustfmt {
     pub fn format(&self, input: String, cfg: Config) -> Result<String, String> {
-        match self {
+        log::trace!("Rustfmt::format: ({:?}) About to format: `{:?}`", self, input);
+        let input2 = input.clone();
+        let res = match self {
             Rustfmt::Internal => format_internal(input, cfg),
             Rustfmt::External(path, cwd) => format_external(path, cwd, input, cfg),
-        }
+        };
+        log::trace!("Rustfmt::format: ({:?}) About to format: `{:?}` (success)", self, input2);
+        res
     }
 }
 
