@@ -1043,13 +1043,17 @@ pub mod test {
         fn save(&self, result_dir: &Path) -> Result<(), String> {
             let path = self.test.path(result_dir);
             let data = json::to_string_pretty(&self).map_err(|e| {
-                format!(
+                let res = format!(
                     "failed to serialize hover test result: {:?} ({:?})",
                     path, e
-                )
+                ); panic!(res); res
             })?;
             fs::write(path.clone(), data)
-                .map_err(|e| format!("failed to save hover test result: {:?} ({:?})", path, e))
+                .map_err(|e| {
+                    let res = format!("failed to save hover test result: {:?} ({:?})", path, e);
+                    panic!(res);
+                    res
+                })
         }
 
         /// Returns true if data is equal to `other` relaxed so that
@@ -1093,7 +1097,7 @@ pub mod test {
             let doc_id = TextDocumentIdentifier::new(url);
             let position = Position::new(self.line - 1u64, self.col - 1u64);
             let params = TextDocumentPositionParams::new(doc_id, position);
-            let result = tooltip(&ctx, &params).map_err(|e| format!("tooltip error: {:?}", e));
+            let result = tooltip(&ctx, &params).map_err(|e| panic!("tooltip error: {:?}", e));
 
             TestResult {
                 test: self.clone(),
@@ -1218,22 +1222,23 @@ pub mod test {
             save_dir: PathBuf,
         ) -> Result<Vec<TestFailure>, String> {
             fs::create_dir_all(&load_dir).map_err(|e| {
-                format!(
+                panic!(
                     "load_dir does not exist and could not be created: {:?} ({:?})",
                     load_dir, e
-                )
+                ); String::from("fs::create_dir_all(&load_dir)")
             })?;
             fs::create_dir_all(&save_dir).map_err(|e| {
-                format!(
+                panic!(
                     "save_dir does not exist and could not be created: {:?} ({:?})",
                     save_dir, e
-                )
+                ); String::from("fs::create_dir_all(&save_dir)")
             })?;
             self.ctx.block_on_build();
 
             let results: Vec<TestResult> = tests
                 .iter()
                 .map(|test| {
+                    eprintln!("Running test: {} {} {}", test.file, test.line, test.col);
                     let result = test.run(&self.project_dir, &self.ctx);
                     result.save(&save_dir).unwrap();
                     result
@@ -2114,6 +2119,10 @@ pub mod test {
             .join("hover")
             .join("save_data");
         let load_dir = proj_dir.join("save_data");
+        eprintln!("cwd: {}", cwd);
+        eprintln!("proj_dir: {}", proj_dir.display());
+        eprintln!("save_dir: {}", save_dir.display());
+        eprintln!("load_dir: {}", load_dir.display());
 
         let harness = TooltipTestHarness::new(proj_dir, &out);
 
@@ -2121,11 +2130,11 @@ pub mod test {
 
         let failures = harness.run_tests(&tests, load_dir, save_dir)?;
 
+        eprintln!("{}\n\n", out.reset().join("\n"));
+        eprintln!("{:#?}\n\n", &failures);
         if failures.is_empty() {
-            Ok(())
+            Err(format!("actually ok").into())
         } else {
-            eprintln!("{}\n\n", out.reset().join("\n"));
-            eprintln!("{:#?}\n\n", failures);
             Err(format!("{} of {} tooltip tests failed", failures.len(), tests.len()).into())
         }
     }
