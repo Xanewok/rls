@@ -2119,7 +2119,7 @@ pub mod test {
             .join("hover")
             .join("save_data");
         let load_dir = proj_dir.join("save_data");
-        eprintln!("cwd: {}", cwd);
+        eprintln!("cwd: {}", cwd.display());
         eprintln!("proj_dir: {}", proj_dir.display());
         eprintln!("save_dir: {}", save_dir.display());
         eprintln!("load_dir: {}", load_dir.display());
