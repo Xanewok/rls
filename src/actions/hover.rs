@@ -782,6 +782,7 @@ fn format_object(rustfmt: Rustfmt, fmt_config: &FmtConfig, the_type: String) -> 
         format!("{}{{}}", trimmed)
     };
 
+    eprintln!("format_object: object: {:?}", object);
     let formatted = match rustfmt.format(object.clone(), config) {
         Ok(lines) => match lines.rfind('{') {
             Some(pos) => lines[0..pos].into(),
@@ -825,6 +826,8 @@ fn format_object(rustfmt: Rustfmt, fmt_config: &FmtConfig, the_type: String) -> 
         formatted
     };
 
+    eprintln!("format_object: object: {:?}", object);
+
     result.trim().into()
 }
 
@@ -840,6 +843,7 @@ fn format_method(rustfmt: Rustfmt, fmt_config: &FmtConfig, the_type: String) -> 
 
     let method = format!("impl Dummy {{ {} {{ unimplemented!() }} }}", the_type);
 
+    eprintln!("format_method: method: {:?}", method);
     let result = match rustfmt.format(method.clone(), config) {
         Ok(mut lines) => {
             if let Some(front_pos) = lines.find('{') {
@@ -866,7 +870,7 @@ fn format_method(rustfmt: Rustfmt, fmt_config: &FmtConfig, the_type: String) -> 
             the_type
         }
     };
-
+    eprintln!("format_method: result: {:?}", result);
     result.trim().into()
 }
 
@@ -916,33 +920,47 @@ pub fn tooltip(
 
     let contents = if let Ok(def) = hover_span_def {
         if def.kind == DefKind::Local && def.span == hover_span && def.qualname.contains('$') {
+            eprintln!("tooltip_local_variable_decl");
             tooltip_local_variable_decl(&ctx, &def, doc_url)
         } else if def.kind == DefKind::Local
             && def.span != hover_span
             && !def.qualname.contains('$')
         {
+            eprintln!("tooltip_function_arg_usage");
             tooltip_function_arg_usage(&ctx, &def, doc_url)
         } else if def.kind == DefKind::Local && def.span != hover_span && def.qualname.contains('$')
         {
+            eprintln!("tooltip_local_variable_usage");
             tooltip_local_variable_usage(&ctx, &def, doc_url)
         } else if def.kind == DefKind::Local && def.span == hover_span {
+            eprintln!("tooltip_function_signature_arg");
             tooltip_function_signature_arg(&ctx, &def, doc_url)
         } else {
             match def.kind {
                 DefKind::TupleVariant | DefKind::StructVariant | DefKind::Field => {
+                    eprintln!("tooltip_field_or_variant");
                     tooltip_field_or_variant(&ctx, &def, doc_url)
                 }
                 DefKind::Enum | DefKind::Union | DefKind::Struct | DefKind::Trait => {
+                    eprintln!("tooltip_struct_enum_union_trait");
                     tooltip_struct_enum_union_trait(&ctx, &def, doc_url)
                 }
                 DefKind::Function | DefKind::Method | DefKind::ForeignFunction => {
+                    eprintln!("tooltip_function_method");
                     tooltip_function_method(&ctx, &def, doc_url)
                 }
-                DefKind::Mod => tooltip_mod(&ctx, &def, doc_url),
+                DefKind::Mod => {
+                    eprintln!("tooltip_mod");
+                    tooltip_mod(&ctx, &def, doc_url)
+                },
                 DefKind::Static | DefKind::ForeignStatic | DefKind::Const => {
+                    eprintln!("tooltip_static_const_decl");
                     tooltip_static_const_decl(&ctx, &def, doc_url)
                 }
-                DefKind::Type => tooltip_type(&ctx, &def, doc_url),
+                DefKind::Type => {
+                    eprintln!("tooltip_type");
+                    tooltip_type(&ctx, &def, doc_url)
+                },
                 _ => {
                     debug!(
                         "tooltip: ignoring def: \
@@ -963,6 +981,7 @@ pub fn tooltip(
         Vec::default()
     };
     debug!("tooltip: contents.len: {}", contents.len());
+    eprintln!("tooltip: {:#?}", contents);
     Ok(contents)
 }
 
