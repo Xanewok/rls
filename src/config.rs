@@ -187,7 +187,7 @@ impl Default for Config {
             no_default_features: false,
             jobs: None,
             all_targets: true,
-            racer_completion: true,
+            racer_completion: false,
             clippy_preference: ClippyPreference::OptIn,
             full_docs: Inferrable::Inferred(false),
             show_hover_context: true,
