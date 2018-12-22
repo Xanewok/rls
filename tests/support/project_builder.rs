@@ -119,11 +119,17 @@ impl Project {
     pub fn root(&self) -> &Path {
         &self.root
     }
+
+    pub fn file_path(&self, path: impl AsRef<Path>) -> PathBuf {
+        self.root().join(path)
+    }
+
+    pub fn file_uri(&self, path: impl AsRef<Path>) -> url::Url {
+        url::Url::from_file_path(self.file_path(path)).unwrap()
+    }
 }
 
 // Generates a project layout
 pub fn project(name: &str) -> ProjectBuilder {
     ProjectBuilder::new(paths::root().join(name))
 }
-
-

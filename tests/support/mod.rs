@@ -157,6 +157,24 @@ impl RlsHandle {
         self.send(&message)
     }
 
+    pub fn request_typed<T: rls::server::RequestAction>(
+        &mut self,
+        id: usize,
+        params: T::Params,
+    ) -> io::Result<usize>
+    where
+        T::Params: serde::Serialize,
+    {
+        let message = json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": T::METHOD,
+                "params": params,
+        });
+
+        self.send(&message)
+    }
+
     /// Blocks until at least `count` messages have appearing in stdout.
     ///
     /// Panics if the timeout has been exceeded from call time **and** exceeded
