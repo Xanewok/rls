@@ -24,6 +24,7 @@ use std::time::{Duration, Instant};
 pub mod project_builder;
 pub mod paths;
 pub mod harness;
+pub mod io;
 
 /// Returns a path to directory containing test fixtures.
 pub fn fixtures_dir() -> &'static Path {
