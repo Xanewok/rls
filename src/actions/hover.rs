@@ -974,7 +974,6 @@ pub mod test {
     use super::*;
 
     use crate::actions::format::Rustfmt;
-    use crate::build::BuildPriority;
     use crate::config;
     use crate::lsp_data::{ClientCapabilities, InitializationOptions};
     use crate::lsp_data::{Position, TextDocumentIdentifier, TextDocumentPositionParams};
@@ -1055,7 +1054,7 @@ pub mod test {
                     path, e
                 )
             })?;
-            fs::write(path.clone(), data)
+            fs::write(&path, data)
                 .map_err(|e| format!("failed to save hover test result: {:?} ({:?})", path, e))
         }
 
@@ -1174,7 +1173,7 @@ pub mod test {
     pub struct TooltipTestHarness {
         ctx: InitActionContext,
         project_dir: PathBuf,
-        working_dir: PathBuf,
+        _working_dir: tempfile::TempDir,
     }
 
     impl TooltipTestHarness {
@@ -1185,7 +1184,6 @@ pub mod test {
             output: &O,
             racer_fallback_completion: bool,
         ) -> TooltipTestHarness {
-            use env_logger;
             let _ = env_logger::try_init();
 
             // Prevent the hover test project build from trying to use the rls test
@@ -1194,20 +1192,23 @@ pub mod test {
                 env::set_var("RUSTC", "rustc");
             }
 
-            let pid = process::id();
             let client_caps = ClientCapabilities {
                 code_completion_has_snippet_support: true,
                 related_information_support: true,
             };
-            let mut config = config::Config::default();
 
-            let temp_dir = tempfile::tempdir().unwrap().into_path();
-            config.target_dir = config::Inferrable::Specified(Some(temp_dir.clone()));
-            config.racer_completion = racer_fallback_completion;
-            // FIXME(#1195): This led to spurious failures on macOS; possibly
-            // because regular build and #[cfg(test)] did race or rls-analysis
-            // didn't lower them properly?
-            config.all_targets = false;
+            let _working_dir = tempfile::tempdir().expect("Couldn't create tempdir");
+            let target_dir = _working_dir.path().to_owned();
+
+            let config = config::Config {
+                target_dir: config::Inferrable::Specified(Some(target_dir)),
+                racer_completion: racer_fallback_completion,
+                // FIXME(#1195): This led to spurious failures on macOS.
+                // Possibly because regular build and #[cfg(test)] did race or
+                // rls-analysis didn't lower them properly?
+                all_targets: false,
+                ..Default::default()
+            };
 
             let config = Arc::new(Mutex::new(config));
             let analysis = Arc::new(analysis::AnalysisHost::new(analysis::Target::Debug));
@@ -1219,17 +1220,17 @@ pub mod test {
                 config,
                 client_caps,
                 project_dir.clone(),
-                pid,
+                process::id(),
                 true,
             );
 
             ctx.init(InitializationOptions::default(), output);
-            ctx.build(&project_dir, BuildPriority::Immediate, output);
+            ctx.block_on_build();
 
             TooltipTestHarness {
                 ctx,
                 project_dir,
-                working_dir: temp_dir
+                _working_dir,
             }
         }
 
@@ -1257,7 +1258,6 @@ pub mod test {
                     save_dir, e
                 )
             })?;
-            self.ctx.block_on_build();
 
             let results: Vec<TestResult> = tests
                 .iter()
@@ -1268,9 +1268,8 @@ pub mod test {
                 }).collect();
 
             let failures: Vec<TestFailure> = results
-                .iter()
-                .map(|actual_result: &TestResult| {
-                    let actual_result = actual_result.clone();
+                .into_iter()
+                .map(|actual_result: TestResult| {
                     match actual_result.test.load_result(&load_dir) {
                         Ok(expect_result) => {
                             if actual_result.test != expect_result.test {
@@ -1284,30 +1283,17 @@ pub mod test {
                         }
                         Err(e) => Some((Err(e), actual_result)),
                     }
-                }).filter(|failed_result| failed_result.is_some())
-                .map(|failed_result| failed_result.unwrap())
-                .map(|failed_result| match failed_result {
-                    (Ok(expect_result), actual_result) => {
-                        let load_file = actual_result.test.path(&load_dir);
-                        let save_file = actual_result.test.path(&save_dir);
-                        TestFailure {
-                            test: actual_result.test,
-                            expect_data: Ok(expect_result.data),
-                            expect_file: load_file,
-                            actual_data: Ok(actual_result.data),
-                            actual_file: save_file,
-                        }
-                    }
-                    (Err(e), actual_result) => {
-                        let load_file = actual_result.test.path(&load_dir);
-                        let save_file = actual_result.test.path(&save_dir);
-                        TestFailure {
-                            test: actual_result.test,
-                            expect_data: Err(e),
-                            expect_file: load_file,
-                            actual_data: Ok(actual_result.data),
-                            actual_file: save_file,
-                        }
+                }).filter_map(|failed_result| failed_result)
+                .map(|(result, actual_result)| {
+                    let load_file = actual_result.test.path(&load_dir);
+                    let save_file = actual_result.test.path(&save_dir);
+
+                    TestFailure {
+                        test: actual_result.test,
+                        expect_data: result.map(|x| x.data),
+                        expect_file: load_file,
+                        actual_data: Ok(actual_result.data),
+                        actual_file: save_file,
                     }
                 }).collect();
 
@@ -1319,10 +1305,6 @@ pub mod test {
         fn drop(&mut self) {
             if let Ok(mut jobs) = self.ctx.jobs.lock() {
                 jobs.wait_for_all();
-            }
-
-            if fs::metadata(&self.working_dir).is_ok() {
-                fs::remove_dir_all(&self.working_dir).expect("failed to tidy up");
             }
         }
     }
