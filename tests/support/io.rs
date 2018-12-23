@@ -23,17 +23,44 @@
 use serde_json::Value;
 use super::fixtures_dir;
 
+enum Error {
+	IO(std::io::Error),
+	Parse(serde_json::Error)
+}
+
+trait ReadWithTimeout {
+	type Data;
+	type Error;
+	fn read_msg(&mut self) -> Result<Option<Self::Data>, Self::Error>;
+}
+
+// TODO: Implement that with mio for ChildStdout
+impl<R: Read> ReadWithTimeout for BufReader<R> {
+	type Data = serde_json::Value;
+	type Error = Error;
+
+	fn read_msg(&mut self) -> Result<Option<serde_json::Value>, Error> {
+		let mut line = String::with_capacity(1024);
+		self.read_line(&mut line).map_err(Error::IO)?;
+		
+		match line.trim() {
+			line if !line.is_empty() => Ok(serde_json::from_str(line).map_err(Error::Parse)?),
+			_ => Ok(None),
+		}
+	}
+}
+
 use std::io::{Read, BufRead, BufReader};
 
 type Pred<'a> = Fn(&Value) -> bool + 'a;
 type Body<'a> = Fn(&Value) + 'a;
 
-struct Context<'a, R: BufRead> {
+struct Context<'a, R: ReadWithTimeout> {
 	expectations: Vec<Option<(Box<Pred<'a>>, Box<Body<'a>>)>>,
 	read: R,
 }
 
-impl<'a, R: BufRead> Context<'a, R> {
+impl<'a, R: ReadWithTimeout<Data = serde_json::Value, Error = Error>> Context<'a, R> {
 	pub fn exec_on_match(&mut self, pred: impl Fn(&Value) -> bool + 'a, body: impl Fn(&Value) +'a) -> &mut Context<'a, R> {
 		self.expectations.push(Some((Box::new(pred), Box::new(body))));
 
@@ -57,29 +84,19 @@ impl<'a, R: BufRead> Context<'a, R> {
 		self.expectations.retain(|x| x.is_some());
 	}
 
-	fn read_msg(&mut self) -> Option<serde_json::Value> {
-		let mut line = String::new();
-		self.read.read_line(&mut line).expect("Can't read line");
-		eprintln!("Read: {:?}", line);
-
-		match line.trim() {
-			line if !line.is_empty() => {
-				eprintln!("Non-empty trimmed line: {:?}", line);
-				Some(serde_json::from_str(line).expect("Can't parse message"))
-			},
-			_ => None,
-		}
-	}
-
 	fn consume(mut self) {
 		loop {
-			let msg = self.read_msg();
-			if let Some(ref msg) = msg {
-				self.call_back(msg);
-			}
+			match self.read.read_msg() {
+				Ok(msg) => {
+					if let Some(ref msg) = msg { 
+						self.call_back(msg);
+					}
 
-			if self.expectations.is_empty() || msg.is_none() {
-				break;
+					if self.expectations.is_empty() || msg.is_none() {
+						break;
+					}
+				},
+				Err(e) => panic!(e),
 			}
 		}
 	}
