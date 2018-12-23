@@ -61,6 +61,8 @@ rustc-workspace-hack = "1.0.0"
 [dev-dependencies]
 difference = "2"
 tempfile = "3"
+mio = "0.6.2"
+mio-named-pipes = "0.1"
 
 [build-dependencies]
 rustc_tools_util = { git = "https://github.com/rust-lang/rust-clippy", rev = "fc24fce73f878e641094b1802df1e748c5fe233a" }

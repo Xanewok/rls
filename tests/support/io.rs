@@ -20,6 +20,9 @@
 //!   wait_until_done_indexing would register
 //!
 
+use mio;
+use mio_named_pipes;
+
 use serde_json::Value;
 use super::fixtures_dir;
 
@@ -100,6 +103,49 @@ impl<'a, R: ReadWithTimeout<Data = serde_json::Value, Error = Error>> Context<'a
 			}
 		}
 	}
+}
+
+#[test]
+fn _mio() {
+	use std::process::*;
+	use crate::support::{fixtures_dir, rls_exe};
+	use crate::support::project_builder::ProjectBuilder;
+	use serde_json::json;
+	use std::io::Write;
+	use std::io::Read;
+
+    pub fn send_string(stdin: &mut ChildStdin, s: &str) -> std::io::Result<usize> {
+        let full_msg = format!("Content-Length: {}\r\n\r\n{}", s.len(), s);
+        stdin.write(full_msg.as_bytes())
+    }
+    pub fn send(stdin: &mut ChildStdin, j: &serde_json::Value) -> std::io::Result<usize> {
+        send_string(stdin, &j.to_string())
+    }
+
+	let p = ProjectBuilder::try_from_fixture(fixtures_dir().join("common"))
+		.unwrap()
+		.build();
+
+	let mut child: Child = Command::new(rls_exe())
+		.stdout(Stdio::piped())
+		.stdin(Stdio::piped())
+		.current_dir(p.root())
+		.spawn()
+		.unwrap();
+
+	let mut stdin = child.stdin.take().unwrap();
+	let mut child_stdout: ChildStdout = child.stdout.take().unwrap();
+	
+	let a = json!({ "jsonrpc": "2.0", "id": 0, "method": "initialize", "params": { "rootPath": p.root(), "capabilities": {} } });
+	send(&mut stdin, &a);
+
+	let mut s = Vec::new();
+	child_stdout.read(&mut s).unwrap();
+	eprintln!("{:?}", s);
+	let _ = child.kill();
+
+	#[cfg(windows)]
+	let xx =  unsafe { mio_named_pipes::NamedPipe::from_raw_handle(child_stdout.into_raw_handle()) };
 }
 
 #[test]
