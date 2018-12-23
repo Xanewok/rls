@@ -11,7 +11,7 @@
 use serde_json::{self, json};
 
 use std::env;
-use std::io::{self, Read, Write};
+use std::io::{Read, Write};
 use std::mem;
 use std::panic;
 use std::path::{Path, PathBuf};
@@ -111,14 +111,14 @@ impl RlsHandle {
         }
     }
 
-    pub fn send_string(&mut self, s: &str) -> io::Result<usize> {
+    pub fn send_string(&mut self, s: &str) -> std::io::Result<usize> {
         let full_msg = format!("Content-Length: {}\r\n\r\n{}", s.len(), s);
         self.stdin.write(full_msg.as_bytes())
     }
-    pub fn send(&mut self, j: &serde_json::Value) -> io::Result<usize> {
+    pub fn send(&mut self, j: &serde_json::Value) -> std::io::Result<usize> {
         self.send_string(&j.to_string())
     }
-    pub fn notify(&mut self, method: &str, params: Option<serde_json::Value>) -> io::Result<usize> {
+    pub fn notify(&mut self, method: &str, params: Option<serde_json::Value>) -> std::io::Result<usize> {
         let message = if let Some(params) = params {
             json!({
                 "jsonrpc": "2.0",
@@ -139,7 +139,7 @@ impl RlsHandle {
         id: u64,
         method: &str,
         params: Option<serde_json::Value>,
-    ) -> io::Result<usize> {
+    ) -> std::io::Result<usize> {
         let message = if let Some(params) = params {
             json!({
                 "jsonrpc": "2.0",
@@ -162,7 +162,7 @@ impl RlsHandle {
         &mut self,
         id: usize,
         params: T::Params,
-    ) -> io::Result<usize>
+    ) -> std::io::Result<usize>
     where
         T::Params: serde::Serialize,
     {

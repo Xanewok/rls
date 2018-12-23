@@ -1,0 +1,4 @@
+{ "key": "value" }
+{ "jsonrpc": "2.0", "id": 1, "params": { "innerKey": "innerValue" } }
+{ "jsonrpc": "2.0", "id": 1, "params": { "innerKey": "innerValue" } }
+{}
