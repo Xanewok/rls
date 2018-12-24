@@ -53,6 +53,8 @@ rustc-workspace-hack = "1.0.0"
 [dev-dependencies]
 difference = "2"
 tempfile = "3"
+lsp-client = { git = "https://github.com/Xanewok/lsp-client", branch = "master" }
+tokio = "0.1"
 
 [build-dependencies]
 rustc_tools_util = { git = "https://github.com/rust-lang/rust-clippy", rev = "39bd84494f4a9b40f2e3b38416a91d52d5c4738b" }
