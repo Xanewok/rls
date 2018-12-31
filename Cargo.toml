@@ -55,6 +55,9 @@ difference = "2"
 tempfile = "3"
 lsp-client = { git = "https://github.com/Xanewok/lsp-client", branch = "master" }
 tokio = "0.1"
+futures = "0.1"
+tokio-process = "0.2"
+tokio-timer = "0.2"
 
 [build-dependencies]
 rustc_tools_util = { git = "https://github.com/rust-lang/rust-clippy", rev = "39bd84494f4a9b40f2e3b38416a91d52d5c4738b" }
