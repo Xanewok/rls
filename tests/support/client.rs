@@ -7,11 +7,12 @@ use std::time::Duration;
 
 use futures::sink::Sink;
 use futures::stream::Stream;
-use lsp_client::proto::{LspDecoder, LspEncoder};
+use lsp_codec::{LspDecoder, LspEncoder};
 use serde_json::{json, Value};
 use tokio::codec::{FramedRead, FramedWrite};
 use tokio::runtime::current_thread::Runtime;
 use tokio_process::{Child, ChildStdin, ChildStdout, CommandExt};
+use tokio_timer::Timeout;
 
 use super::project_builder::Project;
 use super::rls_exe;
@@ -121,7 +122,7 @@ impl RlsHandle {
         let rt = &mut self.runtime;
 
         let fut = self.child.wait_with_output();
-        let fut = tokio_timer::Timeout::new(fut, Duration::from_secs(15));
+        let fut = Timeout::new(fut, Duration::from_secs(15));
 
         rt.block_on(fut).unwrap();
     }
