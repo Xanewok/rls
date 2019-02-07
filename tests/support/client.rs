@@ -10,20 +10,26 @@
 //! true for the message received, and if so we send the message, notifying the
 //! receiver (thus, implementing the Future<Item = Value> model).
 
+use futures::Poll;
 use std::cell::{Ref, RefCell};
+use std::io::Write;
 use std::process::{Command, Stdio};
 use std::rc::Rc;
+use tokio::codec::Encoder;
+use tokio::io::AsyncRead;
+use tokio::io::AsyncWrite;
+use tokio::io::Read;
 
 use futures::sink::Sink;
 use futures::stream::Stream;
 use futures::unsync::oneshot;
 use futures::Future;
-use lsp_codec::{LspDecoder, LspEncoder};
+use lsp_codec::{LspCodec, LspDecoder, LspEncoder};
 use lsp_types::notification::{Notification, PublishDiagnostics};
 use lsp_types::PublishDiagnosticsParams;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use tokio::codec::{FramedRead, FramedWrite};
+use tokio::codec::{Framed, FramedRead, FramedWrite};
 use tokio::runtime::current_thread::Runtime;
 use tokio::util::FutureExt;
 use tokio_process::{Child, ChildStdin, CommandExt};
@@ -39,22 +45,68 @@ use super::{rls_exe, rls_timeout};
 type Messages = Rc<RefCell<Vec<Value>>>;
 type Channels = Rc<RefCell<Vec<(Box<Fn(&Value) -> bool>, oneshot::Sender<Value>)>>>;
 
+struct ChildProcess {
+    child: tokio_process::Child,
+    stdin: tokio_process::ChildStdin,
+    stdout: tokio_process::ChildStdout,
+}
+
+impl Read for ChildProcess {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        Read::read(&mut self.stdout, buf)
+    }
+}
+
+impl Write for ChildProcess {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        Write::write(&mut self.stdin, buf)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Write::flush(&mut self.stdin)
+    }
+}
+
+impl AsyncRead for ChildProcess {}
+impl AsyncWrite for ChildProcess {
+    fn shutdown(&mut self) -> Poll<(), std::io::Error> {
+        AsyncWrite::shutdown(&mut self.stdin)
+    }
+}
+
+impl ChildProcess {
+    fn spawn_from_command(mut cmd: Command) -> Result<ChildProcess, std::io::Error> {
+        cmd.stdin(Stdio::piped());
+        cmd.stdout(Stdio::piped());
+        let mut child = cmd.spawn_async()?;
+
+        Ok(ChildProcess {
+            stdout: child.stdout().take().unwrap(),
+            stdin: child.stdin().take().unwrap(),
+            child,
+        })
+    }
+}
+
 impl Project {
     pub fn spawn_rls_async(&self) -> RlsHandle {
         let mut cmd = Command::new(rls_exe());
-        cmd.current_dir(self.root())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit());
-
-        let mut child = cmd.spawn_async().expect("Couldn't spawn RLS");
-        let stdin = child.stdin().take().unwrap();
-        let stdout = child.stdout().take().unwrap();
+        cmd.current_dir(self.root()).stderr(Stdio::inherit());
+        // I/O Transport
+        let process = ChildProcess::spawn_from_command(cmd).unwrap();
+        // Framed
+        let framed = tokio_codec::Framed::new(process, LspCodec::default());
+        // Channel
+        let (sink, stream) = framed.split();
 
         let msgs = Messages::default();
         let chans = Channels::default();
 
-        let reader = FramedRead::new(std::io::BufReader::new(stdout), LspDecoder::default())
+        // FIXME: Not possible to use this with by_ref and .split() on Framed;
+        // We need to wait on the child to exit, for that we need to `unsplit`
+        // the (sink, stream) but to read the future we need to consume the
+        // stream
+        let reader = stream
+            .by_ref()
             .map_err(|_| ())
             .for_each({
                 let msgs = Rc::clone(&msgs);
@@ -63,12 +115,12 @@ impl Project {
             })
             .timeout(rls_timeout());
 
-        let writer = Some(FramedWrite::new(stdin, LspEncoder));
+        let sink = Some(sink);
 
         let mut rt = Runtime::new().unwrap();
         rt.spawn(reader.map_err(|_| ()));
 
-        RlsHandle { writer, child, runtime: rt, messages: msgs, channels: chans }
+        RlsHandle { writer: sink, reader: stream, runtime: rt, messages: msgs, channels: chans }
     }
 }
 
@@ -109,9 +161,12 @@ fn process_msg(msg: Value, msgs: Messages, chans: Channels) -> Result<(), ()> {
 /// receive messages to and from the process.
 pub struct RlsHandle {
     /// Asynchronous LSP writer for the spawned process.
-    writer: Option<FramedWrite<ChildStdin, LspEncoder>>,
+    writer: Option<futures::stream::SplitSink<tokio_codec::Framed<ChildProcess, LspCodec>>>,
+    reader: futures::stream::SplitStream<tokio_codec::Framed<ChildProcess, LspCodec>>,
+    // writer: Option<T>,
+    // writer: Option<FramedWrite<ChildStdin, LspEncoder>>,
     /// Handle to the spawned child.
-    child: Child,
+    // child: Child,
     /// Tokio single-thread runtime onto which LSP message reading stream has
     /// been spawned. Allows to synchronously write messages via `writer` and
     /// block on received messages matching an enqueued predicate in `channels`.
@@ -239,8 +294,11 @@ impl RlsHandle {
         self.request::<lsp_types::request::Shutdown>(99999, ());
         self.notify::<lsp_types::notification::Exit>(());
 
-        let fut = self.child.wait_with_output().timeout(rls_timeout());
+        // TODO: `unsplit` the (sink, stream)
+        // https://github.com/tokio-rs/tokio/pull/807/files
+        // Then combine, extract child out of it and wait on it
+        // let fut = self.child.wait_with_output().timeout(rls_timeout());
 
-        self.runtime.block_on(fut).unwrap();
+        // self.runtime.block_on(fut).unwrap();
     }
 }
