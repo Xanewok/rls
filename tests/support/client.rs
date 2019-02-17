@@ -15,7 +15,7 @@ use std::cell::{Ref, RefCell};
 use std::io::Write;
 use std::process::{Command, Stdio};
 use std::rc::Rc;
-use tokio::codec::Encoder;
+use tokio::codec::{Decoder, Encoder};
 use tokio::io::AsyncRead;
 use tokio::io::AsyncWrite;
 use tokio::io::Read;
@@ -87,6 +87,54 @@ impl ChildProcess {
     }
 }
 
+// TODO: Extract LspClient () and LspServer traits
+// According to https://www.jsonrpc.org/specification#conventions
+// The Client is defined as the origin of Request objects and the handler of Response objects.
+// The Server is defined as the origin of Response objects and the handler of Request objects.
+
+struct LspConnection<T, F> {
+    transport: T,
+    on_msg: Option<F>,
+}
+
+impl<T, F> LspConnection<T, F>
+where
+    T: AsyncRead + AsyncWrite + 'static,
+    F: FnMut(Value) -> () + 'static
+{
+    fn with_transport(transport: T) -> LspConnection<T, F> {
+        LspConnection {
+            transport,
+            on_msg: None,
+        }
+    }
+
+    fn on_message(&mut self, cb: F) -> &mut Self {
+        self.on_msg = Some(cb);
+        self
+    }
+
+    fn build(self) -> Box<Stream<Item=(), Error=()>> {
+        let Self { transport, mut on_msg } = self;
+
+        let framed = LspCodec::default().framed(transport);
+        let (sink, stream) = framed.split();
+        let stream = stream.map(move |e| {
+            if let Some(ref mut cb) = on_msg {
+                cb(e)
+            } else {
+                ()
+            }
+        }).map_err(|_| ());
+
+        Box::new(stream)
+    }
+}
+
+fn some() {
+    // LspClientBuilder::with_transport(transport: T)
+}
+
 impl Project {
     pub fn spawn_rls_async(&self) -> RlsHandle {
         let mut cmd = Command::new(rls_exe());
@@ -94,7 +142,7 @@ impl Project {
         // I/O Transport
         let process = ChildProcess::spawn_from_command(cmd).unwrap();
         // Framed
-        let framed = tokio_codec::Framed::new(process, LspCodec::default());
+        let framed = tokio::codec::Framed::new(process, LspCodec::default());
         // Channel
         let (sink, stream) = framed.split();
 
@@ -106,7 +154,6 @@ impl Project {
         // the (sink, stream) but to read the future we need to consume the
         // stream
         let reader = stream
-            .by_ref()
             .map_err(|_| ())
             .for_each({
                 let msgs = Rc::clone(&msgs);
@@ -120,7 +167,7 @@ impl Project {
         let mut rt = Runtime::new().unwrap();
         rt.spawn(reader.map_err(|_| ()));
 
-        RlsHandle { writer: sink, reader: stream, runtime: rt, messages: msgs, channels: chans }
+        RlsHandle { writer: sink, runtime: rt, messages: msgs, channels: chans }
     }
 }
 
@@ -161,8 +208,7 @@ fn process_msg(msg: Value, msgs: Messages, chans: Channels) -> Result<(), ()> {
 /// receive messages to and from the process.
 pub struct RlsHandle {
     /// Asynchronous LSP writer for the spawned process.
-    writer: Option<futures::stream::SplitSink<tokio_codec::Framed<ChildProcess, LspCodec>>>,
-    reader: futures::stream::SplitStream<tokio_codec::Framed<ChildProcess, LspCodec>>,
+    writer: Option<futures::stream::SplitSink<tokio::codec::Framed<ChildProcess, LspCodec>>>,
     // writer: Option<T>,
     // writer: Option<FramedWrite<ChildStdin, LspEncoder>>,
     /// Handle to the spawned child.
