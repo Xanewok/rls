@@ -52,8 +52,6 @@ fn client_test_infer_bin() {
 
     rls.wait_for_indexing();
     assert!(rls.messages().iter().filter(|msg| msg["method"] != "window/progress").count() > 1);
-
-    rls.shutdown();
 }
 
 /// Test includes window/progress regression testing
@@ -153,8 +151,6 @@ fn client_test_simple_workspace() {
         })
         .count();
     assert_eq!(count, 4);
-
-    rls.shutdown();
 }
 
 #[test]
@@ -279,8 +275,6 @@ fn client_changing_workspace_lib_retains_diagnostics() {
     assert!(lib.diagnostics.iter().any(|m| m.message.contains("unused variable: `test_val`")));
     assert!(lib.diagnostics.iter().any(|m| m.message.contains("unused variable: `unused`")));
     assert!(bin.diagnostics[0].message.contains("unused variable: `val`"));
-
-    rls.shutdown();
 }
 
 #[test]
@@ -372,8 +366,6 @@ fn client_implicit_workspace_pick_up_lib_changes() {
     let bin = rls.future_diagnostics("src/main.rs");
     let bin = rls.block_on(bin).unwrap();
     assert!(bin.diagnostics[0].message.contains("unused variable: `val`"));
-
-    rls.shutdown();
 }
 
 #[test]
@@ -440,8 +432,6 @@ fn client_test_complete_self_crate_name() {
 
     let item = items.into_iter().nth(0).expect("Racer autocompletion failed");
     assert_eq!(item.detail.unwrap(), "pub fn function() -> usize");
-
-    rls.shutdown();
 }
 
 #[test]
@@ -534,8 +524,6 @@ fn client_completion_suggests_arguments_in_statements() {
 
     let item = items.into_iter().nth(0).expect("Racer autocompletion failed");
     assert_eq!(item.insert_text.unwrap(), "function()");
-
-    rls.shutdown();
 }
 
 #[test]
@@ -602,8 +590,6 @@ fn client_use_statement_completion_doesnt_suggest_arguments() {
 
     let item = items.into_iter().nth(0).expect("Racer autocompletion failed");
     assert_eq!(item.insert_text.unwrap(), "function");
-
-    rls.shutdown();
 }
 
 /// Test simulates typing in a dependency wrongly in a couple of ways before finally getting it
@@ -688,8 +674,6 @@ fn client_dependency_typo_and_fix() {
         diag.diagnostics.iter().find(|d| d.severity == Some(DiagnosticSeverity::Error)),
         None
     );
-
-    rls.shutdown();
 }
 
 /// Tests correct positioning of a toml parse error, use of `==` instead of `=`.
@@ -732,8 +716,6 @@ fn client_invalid_toml_manifest() {
             end: Position { line: 2, character: 22 },
         }
     );
-
-    rls.shutdown();
 }
 
 /// Tests correct file highlighting of workspace member manifest with invalid path dependency.
@@ -791,8 +773,6 @@ fn client_invalid_member_toml_manifest() {
     assert_eq!(diag.diagnostics.len(), 1);
     assert_eq!(diag.diagnostics[0].severity, Some(DiagnosticSeverity::Error));
     assert!(diag.diagnostics[0].message.contains("failed to read"));
-
-    rls.shutdown();
 }
 
 #[test]
@@ -852,8 +832,6 @@ fn client_invalid_member_dependency_resolution() {
     assert_eq!(diag.diagnostics.len(), 1);
     assert_eq!(diag.diagnostics[0].severity, Some(DiagnosticSeverity::Error));
     assert!(diag.diagnostics[0].message.contains("no matching package named `nosuchdep123`"));
-
-    rls.shutdown();
 }
 
 #[test]
@@ -892,8 +870,6 @@ fn client_handle_utf16_unit_text_edits() {
             text: "".to_string(),
         }],
     });
-
-    rls.shutdown();
 }
 
 /// Ensures that wide characters do not prevent RLS from calculating correct
@@ -937,8 +913,6 @@ fn client_format_utf16_range() {
     // Actual formatting isn't important - what is, is that the buffer isn't
     // malformed and code stays semantically equivalent.
     assert_eq!(new_text, vec!["/* 😢😢😢😢😢😢😢 */\nfn main() {}\n"]);
-
-    rls.shutdown();
 }
 
 #[test]
@@ -990,8 +964,6 @@ fn client_lens_run() {
     };
 
     assert_eq!(lens, Some(vec![expected]));
-
-    rls.shutdown();
 }
 
 #[test]
@@ -1068,7 +1040,6 @@ fn client_find_definitions() {
             }
         }
     }
-    rls.shutdown();
 
     // Foo
     let foo_definition = Range {
@@ -1279,8 +1250,6 @@ fn client_deglob() {
             })
             .collect::<Vec<_>>()
     );
-
-    rls.shutdown();
 }
 
 fn is_notification_for_unknown_config(msg: &serde_json::Value) -> bool {
@@ -1345,7 +1314,6 @@ fn client_init_duplicated_and_unknown_settings() {
 
     assert!(rls.messages().iter().any(is_notification_for_unknown_config));
     assert!(rls.messages().iter().any(is_notification_for_duplicated_config));
-    rls.shutdown();
 }
 
 #[test]
@@ -1405,6 +1373,4 @@ fn client_did_change_configuration_duplicated_and_unknown_settings() {
     if !rls.messages().iter().any(is_notification_for_duplicated_config) {
         rls.wait_for_message(is_notification_for_duplicated_config);
     }
-
-    rls.shutdown();
 }

@@ -10,29 +10,25 @@
 //! true for the message received, and if so we send the message, notifying the
 //! receiver (thus, implementing the Future<Item = Value> model).
 
-use futures::Poll;
 use std::cell::{Ref, RefCell};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 use std::rc::Rc;
-use tokio::codec::{Decoder, Encoder};
-use tokio::io::AsyncRead;
-use tokio::io::AsyncWrite;
-use tokio::io::Read;
 
+use futures::Poll;
 use futures::sink::Sink;
-use futures::stream::Stream;
+use futures::stream::{SplitSink, Stream};
 use futures::unsync::oneshot;
 use futures::Future;
-use lsp_codec::{LspCodec, LspDecoder, LspEncoder};
+use lsp_codec::LspCodec;
 use lsp_types::notification::{Notification, PublishDiagnostics};
 use lsp_types::PublishDiagnosticsParams;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use tokio::codec::{Framed, FramedRead, FramedWrite};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::runtime::current_thread::Runtime;
-use tokio::util::FutureExt;
-use tokio_process::{Child, ChildStdin, CommandExt};
+use tokio::util::{FutureExt, StreamExt};
+use tokio_process::{Child, CommandExt};
 
 use super::project_builder::Project;
 use super::{rls_exe, rls_timeout};
@@ -45,10 +41,10 @@ use super::{rls_exe, rls_timeout};
 type Messages = Rc<RefCell<Vec<Value>>>;
 type Channels = Rc<RefCell<Vec<(Box<Fn(&Value) -> bool>, oneshot::Sender<Value>)>>>;
 
-struct ChildProcess {
-    child: tokio_process::Child,
+pub struct ChildProcess {
     stdin: tokio_process::ChildStdin,
     stdout: tokio_process::ChildStdout,
+    child: Rc<tokio_process::Child>,
 }
 
 impl Read for ChildProcess {
@@ -74,7 +70,7 @@ impl AsyncWrite for ChildProcess {
 }
 
 impl ChildProcess {
-    fn spawn_from_command(mut cmd: Command) -> Result<ChildProcess, std::io::Error> {
+    pub fn spawn_from_command(mut cmd: Command) -> Result<ChildProcess, std::io::Error> {
         cmd.stdin(Stdio::piped());
         cmd.stdout(Stdio::piped());
         let mut child = cmd.spawn_async()?;
@@ -82,8 +78,14 @@ impl ChildProcess {
         Ok(ChildProcess {
             stdout: child.stdout().take().unwrap(),
             stdin: child.stdin().take().unwrap(),
-            child,
+            child: Rc::new(child),
         })
+    }
+
+    /// Returns a handle to the underlying `Child` process.
+    /// Useful when waiting until child process exits.
+    pub fn child(&self) -> Rc<Child> {
+        Rc::clone(&self.child)
     }
 }
 
@@ -92,86 +94,67 @@ impl ChildProcess {
 // The Client is defined as the origin of Request objects and the handler of Response objects.
 // The Server is defined as the origin of Response objects and the handler of Request objects.
 
-struct LspConnection<T, F> {
-    transport: T,
-    on_msg: Option<F>,
+type LspFramed<T> = tokio::codec::Framed<T, LspCodec>;
+
+trait LspFramedExt<T: AsyncRead + AsyncWrite> {
+    fn from_transport(transport: T) -> Self;
 }
 
-impl<T, F> LspConnection<T, F>
-where
-    T: AsyncRead + AsyncWrite + 'static,
-    F: FnMut(Value) -> () + 'static
-{
-    fn with_transport(transport: T) -> LspConnection<T, F> {
-        LspConnection {
-            transport,
-            on_msg: None,
-        }
+impl<T> LspFramedExt<T> for LspFramed<T> where T: AsyncRead + AsyncWrite {
+    fn from_transport(transport: T) -> Self {
+        tokio::codec::Framed::new(transport, LspCodec::default())
     }
-
-    fn on_message(&mut self, cb: F) -> &mut Self {
-        self.on_msg = Some(cb);
-        self
-    }
-
-    fn build(self) -> Box<Stream<Item=(), Error=()>> {
-        let Self { transport, mut on_msg } = self;
-
-        let framed = LspCodec::default().framed(transport);
-        let (sink, stream) = framed.split();
-        let stream = stream.map(move |e| {
-            if let Some(ref mut cb) = on_msg {
-                cb(e)
-            } else {
-                ()
-            }
-        }).map_err(|_| ());
-
-        Box::new(stream)
-    }
-}
-
-fn some() {
-    // LspClientBuilder::with_transport(transport: T)
 }
 
 impl Project {
-    pub fn spawn_rls_async(&self) -> RlsHandle {
+    pub fn rls_cmd(&self) -> Command {
         let mut cmd = Command::new(rls_exe());
-        cmd.current_dir(self.root()).stderr(Stdio::inherit());
-        // I/O Transport
+        cmd.current_dir(self.root());
+        cmd.stderr(Stdio::inherit());
+        cmd
+    }
+
+    pub fn spawn_rls_with_runtime(&self, mut rt: Runtime) -> RlsHandle<ChildProcess> {
+        let cmd = self.rls_cmd();
+
         let process = ChildProcess::spawn_from_command(cmd).unwrap();
-        // Framed
-        let framed = tokio::codec::Framed::new(process, LspCodec::default());
-        // Channel
-        let (sink, stream) = framed.split();
+        let (sink, stream) = LspFramed::from_transport(process).split();
 
         let msgs = Messages::default();
         let chans = Channels::default();
 
-        // FIXME: Not possible to use this with by_ref and .split() on Framed;
-        // We need to wait on the child to exit, for that we need to `unsplit`
-        // the (sink, stream) but to read the future we need to consume the
-        // stream
+        let (finished_reading, reader_closed) = oneshot::channel();
+
         let reader = stream
+            .timeout(rls_timeout())
             .map_err(|_| ())
             .for_each({
                 let msgs = Rc::clone(&msgs);
                 let chans = Rc::clone(&chans);
-                move |msg| process_msg(msg, msgs.clone(), chans.clone())
+                move |msg| Ok(process_msg(msg, msgs.clone(), chans.clone()))
             })
-            .timeout(rls_timeout());
+            .and_then(move |_| finished_reading.send(()));
+        rt.spawn(reader);
 
         let sink = Some(sink);
 
-        let mut rt = Runtime::new().unwrap();
-        rt.spawn(reader.map_err(|_| ()));
+        RlsHandle {
+            writer: sink,
+            runtime: rt,
+            reader_closed,
+            messages: msgs,
+            channels: chans
+        }
+    }
 
-        RlsHandle { writer: sink, runtime: rt, messages: msgs, channels: chans }
+    pub fn spawn_rls_async(&self) -> RlsHandle<ChildProcess> {
+        let rt = Runtime::new().unwrap();
+
+        self.spawn_rls_with_runtime(rt)
     }
 }
 
-fn process_msg(msg: Value, msgs: Messages, chans: Channels) -> Result<(), ()> {
+fn process_msg(msg: Value, msgs: Messages, chans: Channels) {
     eprintln!("Processing message: {:?}", msg);
 
     let mut chans = chans.borrow_mut();
@@ -188,7 +171,9 @@ fn process_msg(msg: Value, msgs: Messages, chans: Channels) -> Result<(), ()> {
         while idx >= 0 {
             let (pred, tx) = chans.swap_remove(idx as usize);
             if pred(&msg) {
-                tx.send(msg.clone()).map_err(|_| ())?;
+                // This can error when the receiving end has been deallocated -
+                // in this case we just have noone to notify and that's okay.
+                let _ = tx.send(msg.clone());
             } else {
                 chans.push((pred, tx));
             }
@@ -200,20 +185,17 @@ fn process_msg(msg: Value, msgs: Messages, chans: Channels) -> Result<(), ()> {
     }
 
     msgs.borrow_mut().push(msg);
-
-    Ok(())
 }
 
-/// Holds the handle to a spawned RLS child process and allows to send and
-/// receive messages to and from the process.
-pub struct RlsHandle {
-    /// Asynchronous LSP writer for the spawned process.
-    writer: Option<futures::stream::SplitSink<tokio::codec::Framed<ChildProcess, LspCodec>>>,
-    // writer: Option<T>,
-    // writer: Option<FramedWrite<ChildStdin, LspEncoder>>,
-    /// Handle to the spawned child.
-    // child: Child,
-    /// Tokio single-thread runtime onto which LSP message reading stream has
+/// Holds the handle to an RLS connection and allows to send and receive
+/// messages to and from the process.
+pub struct RlsHandle<T: AsyncRead + AsyncWrite> {
+    /// Notified when the reader connection is closed. Used when waiting as
+    /// sanity check, after sending Shutdown request.
+    reader_closed: oneshot::Receiver<()>,
+    /// Asynchronous LSP writer.
+    writer: Option<SplitSink<LspFramed<T>>>,
+    /// Tokio single-thread runtime onto which LSP message reading task has
     /// been spawned. Allows to synchronously write messages via `writer` and
     /// block on received messages matching an enqueued predicate in `channels`.
     runtime: Runtime,
@@ -224,7 +206,7 @@ pub struct RlsHandle {
     channels: Channels,
 }
 
-impl RlsHandle {
+impl<T: AsyncRead + AsyncWrite> RlsHandle<T> {
     /// Returns messages received until the moment of the call.
     pub fn messages(&self) -> Ref<Vec<Value>> {
         self.messages.borrow()
@@ -333,18 +315,18 @@ impl RlsHandle {
         lsp_types::PublishDiagnosticsParams::deserialize(&msg["params"])
             .unwrap_or_else(|_| panic!("Can't deserialize params: {:?}", msg))
     }
+}
 
-    /// Requests the RLS to shut down and waits (with a timeout) until the child
-    /// process is terminated.
-    pub fn shutdown(mut self) {
+impl<T: AsyncRead + AsyncWrite> Drop for RlsHandle<T> {
+    fn drop(&mut self) {
         self.request::<lsp_types::request::Shutdown>(99999, ());
         self.notify::<lsp_types::notification::Exit>(());
 
-        // TODO: `unsplit` the (sink, stream)
-        // https://github.com/tokio-rs/tokio/pull/807/files
-        // Then combine, extract child out of it and wait on it
-        // let fut = self.child.wait_with_output().timeout(rls_timeout());
+        // Wait until the underlying connection is closed.
+        let (_, dummy) = oneshot::channel();
+        let reader_closed = std::mem::replace(&mut self.reader_closed, dummy);
+        let reader_closed = reader_closed.timeout(rls_timeout());
 
-        // self.runtime.block_on(fut).unwrap();
+        self.runtime.block_on(reader_closed).unwrap();
     }
 }
