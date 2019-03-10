@@ -106,6 +106,7 @@ pub struct Def {
     pub qualname: String,
     pub distro_crate: bool,
     pub parent: Option<Id>,
+    pub decl_id: Option<Id>,
     pub value: String,
     pub docs: String,
     // pub sig: Option<Signature>,

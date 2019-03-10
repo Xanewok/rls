@@ -26,7 +26,7 @@ pub use lsp_types::request::Shutdown as ShutdownRequest;
 use lsp_types::{
     CodeActionProviderCapability, CodeLensOptions, CompletionOptions, ExecuteCommandOptions,
     ImplementationProviderCapability, InitializeParams, InitializeResult, RenameProviderCapability,
-    ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind,
+    ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind, TypeDefinitionProviderCapability
 };
 use rls_analysis::AnalysisHost;
 use rls_vfs::Vfs;
@@ -313,6 +313,7 @@ impl<O: Output> LsService<O> {
                 requests::Hover,
                 requests::WorkspaceSymbol,
                 requests::Definition,
+                requests::TypeDefinition,
                 requests::References,
                 requests::Completion,
                 requests::CodeLensRequest;
@@ -402,7 +403,7 @@ fn server_caps(ctx: &ActionContext) -> ServerCapabilities {
             trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
         }),
         definition_provider: Some(true),
-        type_definition_provider: None,
+        type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
         implementation_provider: Some(ImplementationProviderCapability::Simple(true)),
         references_provider: Some(true),
         document_highlight_provider: Some(true),

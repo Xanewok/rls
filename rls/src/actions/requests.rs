@@ -28,7 +28,7 @@ pub use crate::lsp_data::request::{
     CodeActionRequest as CodeAction, CodeLensRequest, Completion,
     DocumentHighlightRequest as DocumentHighlight, DocumentSymbolRequest as Symbols,
     ExecuteCommand, Formatting, GotoDefinition as Definition, GotoImplementation as Implementation,
-    HoverRequest as Hover, RangeFormatting, References, Rename,
+    GotoTypeDefinition as TypeDefinition, HoverRequest as Hover, RangeFormatting, References, Rename,
     ResolveCompletionItem as ResolveCompletion, WorkspaceSymbol,
 };
 use crate::server;
@@ -209,6 +209,48 @@ impl RequestAction for Definition {
             } else {
                 Self::fallback_response()
             }
+        }
+    }
+}
+
+impl RequestAction for TypeDefinition {
+    type Response = Vec<Location>;
+
+    fn fallback_response() -> Result<Self::Response, ResponseError> {
+        Ok(vec![])
+    }
+
+    fn handle(
+        ctx: InitActionContext,
+        params: Self::Params,
+    ) -> Result<Self::Response, ResponseError> {
+        // Save-analysis thread.
+        log::warn!("TYPEDEF: ENTERED HANDLING TYPE DEF");
+        let hover_file_path = parse_file_path!(&params.text_document.uri, "goto_type_def")?;
+        let hover_span = ctx.convert_pos_to_span(hover_file_path, params.position);
+
+        let analysis = &ctx.analysis;
+        let hover_span_def = analysis.id(&hover_span).and_then(|id| analysis.get_def(id));
+        let hover_span_def = match hover_span_def {
+            Ok(val) => val,
+            Err(_) => return Self::fallback_response(),
+        };
+        log::warn!("TYPEDEF (hover_span_def): {:?}", hover_span_def);
+        let type_def = match hover_span_def.decl_id {
+            Some(val) => val,
+            None => return Self::fallback_response(),
+        };
+        log::warn!("TYPEDEF (type_def): {:?}", type_def);
+        let def = analysis.get_def(type_def);
+        log::warn!("TYPEDEF (def): {:?}", def);
+        let def = def.and_then(|def| analysis.goto_def(&def.span));
+
+        if let Ok(out) = def {
+            let result = vec![ls_util::rls_to_location(&out)];
+            trace!("goto_type_def (compiler): {:?}", result);
+            Ok(result)
+        } else {
+            Self::fallback_response()
         }
     }
 }

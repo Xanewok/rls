@@ -347,6 +347,8 @@ impl<'a> CrateReader<'a> {
                     }
                 }
 
+                let decl_id = d.decl_id.map(|id| self.id_from_compiler_id(&id));
+
                 analysis.def_names.entry(d.name.clone()).or_insert_with(|| vec![]).push(id);
 
                 // NOTE not every Def will have a name, e.g. test_data/hello/src/main is analyzed with an implicit module
@@ -371,6 +373,7 @@ impl<'a> CrateReader<'a> {
                     span,
                     name: d.name,
                     value: d.value,
+                    decl_id,
                     qualname: format!("{}{}", self.crate_name, d.qualname),
                     distro_crate,
                     parent,

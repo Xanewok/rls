@@ -661,6 +661,7 @@ fn racer_match_to_def(ctx: &InitActionContext, m: &racer::Match) -> Option<Def> 
             value: contextstr,
             qualname: "".to_string(),
             distro_crate: false,
+            decl_id: None,
             parent: None,
             docs,
         };
@@ -843,8 +844,8 @@ pub fn tooltip(
 
     let hover_file_path = parse_file_path!(&params.text_document.uri, "hover")?;
     let hover_span = ctx.convert_pos_to_span(hover_file_path, params.position);
-    let hover_span_doc = analysis.docs(&hover_span).unwrap_or_else(|_| String::new());
-    let hover_span_typ = analysis.show_type(&hover_span).unwrap_or_else(|_| String::new());
+    let hover_span_doc = analysis.docs(&hover_span).unwrap_or_default();
+    let hover_span_typ = analysis.show_type(&hover_span).unwrap_or_default();
     let hover_span_def = analysis.id(&hover_span).and_then(|id| analysis.get_def(id));
 
     trace!("tooltip: span: {:?}", hover_span);
