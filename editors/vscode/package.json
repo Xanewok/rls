@@ -46,6 +46,7 @@
         "lint": "tslint --config ./tslint.json './src/**/*.ts'",
         "test": "npm run compile && node ./node_modules/vscode/bin/test",
         "prettier": "prettier **/*.ts",
+        "ci:check": "npm run prettier -- --list-different && npm run vscode:prepublish && npm run test",
         "check:version": "node cmd/check-version.js",
         "postinstall": "node ./node_modules/vscode/bin/install",
         "installDevExtension": "npm install && ./node_modules/.bin/vsce package -o ./out/rls-vscode-dev.vsix && code --install-extension ./out/rls-vscode-dev.vsix"

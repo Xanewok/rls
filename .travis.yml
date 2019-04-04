@@ -1,5 +1,5 @@
 language: rust
-dist: trusty
+dist: xenial
 sudo: false
 cache:
   cargo: false
@@ -31,3 +31,19 @@ env:
     - RUST_BACKTRACE=1
     - RLS_TEST_WAIT_FOR_AGES=1
     - CARGO_INCREMENTAL=0
+
+matrix:
+  include:
+    # - language: node_js
+      services: xvfb
+      before_install:
+        # Somehow multi-language matrix.include doesn't play nicely with general
+        # global/default settings (here rust: nightly) so install 10.5 ourselves
+        # (otherwise it falls back to 0.10)
+        - nvm install 10.5
+        - curl https://sh.rustup.rs -sSf -m 60 | sh -s -- -y -v --default-toolchain stable
+        - if [[ "$TRAVIS_OS_NAME" == "windows" ]]; then HOME="/c/Users/travis"; fi
+        - export PATH="$HOME/.cargo/bin:$PATH"
+        - cd editors/vscode
+      install: npm install
+      script: npm run ci:check
