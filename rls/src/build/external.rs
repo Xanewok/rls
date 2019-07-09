@@ -401,7 +401,7 @@ impl BuildGraph for ExternalPlan {
             output: &mut Vec<u64>,
         ) {
             if visited.insert(unit) {
-                for &neighbour in graph.get(&unit).iter().flat_map(|&edges| edges) {
+                for &neighbour in graph.get(&unit).into_iter().flatten() {
                     dfs(neighbour, graph, visited, output);
                 }
                 output.push(unit);

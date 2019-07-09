@@ -321,11 +321,9 @@ impl CargoPlan {
             visited: &mut HashSet<UnitKey>,
             output: &mut Vec<UnitKey>,
         ) {
-            if visited.contains(unit) {
-                return;
-            } else {
+            if !visited.contains(unit) {
                 visited.insert(unit.clone());
-                for neighbour in graph.get(unit).into_iter().flat_map(|nodes| nodes) {
+                for neighbour in graph.get(unit).into_iter().flatten() {
                     dfs(neighbour, graph, visited, output);
                 }
                 output.push(unit.clone());
