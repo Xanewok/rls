@@ -8,6 +8,7 @@ pub use data::{
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::fs::File;
+use std::hash::BuildHasher;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime};
@@ -43,9 +44,9 @@ impl Crate {
 
 /// Reads raw analysis data for non-blacklisted crates from files in directories
 /// pointed by `loader`.
-pub fn read_analysis_from_files<L: AnalysisLoader>(
+pub fn read_analysis_from_files<L: AnalysisLoader, H: BuildHasher>(
     loader: &L,
-    crate_timestamps: HashMap<PathBuf, SystemTime>,
+    crate_timestamps: HashMap<PathBuf, SystemTime, H>,
     crate_blacklist: &[impl AsRef<str> + Debug],
 ) -> Vec<Crate> {
     let mut result = vec![];
