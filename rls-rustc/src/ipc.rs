@@ -16,7 +16,7 @@ pub fn connect<Client: From<RpcChannel>>(
     path: PathBuf,
     reactor: tokio::reactor::Handle,
 ) -> impl Future<Item = Client, Error = io::Error> {
-    log::trace!("ipc: Attempting to connect to {}", path.display());
+    eprintln!("ipc: Attempting to connect to {}", path.display());
     let connection = IpcConnection::connect(path, &reactor).unwrap();
 
     futures::lazy(move || {
@@ -55,15 +55,24 @@ impl FileLoader {
 
 impl FileLoader {
     pub fn file_exists(&self, path: PathBuf) -> impl Future<Item = bool, Error = RpcError> {
+        eprintln!(">>>> Client: file_exists({:?})", &path);
         self.0.call_method("file_exists", "bool", (path,))
     }
 
     pub fn abs_path(&self, path: PathBuf) -> impl Future<Item = Option<PathBuf>, Error = RpcError> {
+        eprintln!(">>>> Client: abs_path({:?})", &path);
         self.0.call_method("abs_path", "Option<PathBuf>", (path,))
     }
 
     pub fn read_file(&self, path: PathBuf) -> impl Future<Item = String, Error = RpcError> {
+        eprintln!(">>>> Client: read_file({:?})", &path);
         self.0.call_method("read_file", "String", (path,))
+    }
+
+    #[cfg(feature = "ipc")]
+    pub fn complete_analysis(&self,  analysis: rls_data::Analysis) -> impl Future<Item = (), Error = RpcError> {
+        eprintln!(">>>> Client: complete_analysis({:?})", analysis.compilation.as_ref().map(|comp| comp.output.clone()));
+        self.0.call_method("complete_analysis", "()", (analysis,))
     }
 }
 

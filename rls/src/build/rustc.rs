@@ -103,21 +103,49 @@ pub(crate) fn rustc(
     let analysis = Arc::clone(&callbacks.analysis);
     let input_files = Arc::clone(&callbacks.input_files);
 
+    let ipc_server = super::ipc::start_with_all(Arc::clone(&vfs), Arc::clone(&analysis));
+    let (endpoint, handle) = ipc_server.unwrap(); // TODO: Handle unwrap
+
     // rustc explicitly panics in `run_compiler()` on compile failure, regardless
     // of whether it encounters an ICE (internal compiler error) or not.
     // TODO: Change librustc_driver behaviour to distinguish between ICEs and
     // regular compilation failure with errors?
-    let result = ::std::panic::catch_unwind(|| {
-        rustc_driver::report_ices_to_stderr_if_any(move || {
-            // Replace stderr so we catch most errors.
-            run_compiler(
-                &args,
-                &mut callbacks,
-                Some(Box::new(ReplacedFileLoader::new(changed))),
-                Some(Box::new(BufWriter(buf))),
-            )
-        })
-    });
+    // let args_clone = args.clone();
+    // let result = ::std::panic::catch_unwind(|| {
+    //     rustc_driver::report_ices_to_stderr_if_any(move || {
+    //         // Replace stderr so we catch most errors.
+    //         run_compiler(
+    //             &args_clone,
+    //             &mut callbacks,
+    //             Some(Box::new(ReplacedFileLoader::new(changed))),
+    //             Some(Box::new(BufWriter(buf))),
+    //         )
+    //     })
+    // });
+
+    // TODO: Copied from rls/src/build/cargo.rs for now
+    let rustc_shim = env::var("RUSTC")
+        .ok()
+        .or_else(|| env::current_exe().ok().and_then(|x| x.to_str().map(String::from)))
+        .expect("Couldn't set executable for RLS rustc shim");
+    let mut cmd = std::process::Command::new(rustc_shim);
+    // In case RLS is set as the rustc shim signal to `main_inner()` to call
+    // `rls_rustc::run()`.
+    cmd.env(crate::RUSTC_SHIM_ENV_VAR_NAME, "1");
+    cmd.env("RLS_IPC_ENDPOINT", &endpoint);
+    cmd.args(args.into_iter().skip(1));
+    cmd.envs(local_envs.clone().into_iter().filter_map(|(k, v)| v.map(|v| (k, v))));
+    log::debug!(">>>> About to spawn a separate rustc");
+    let result = cmd.status();
+    let result = result
+        .map_err(|_| ())
+        .and_then(|exit| if exit.code() == Some(0) { Ok(()) } else { Err(()) });
+
+    log::debug!(">>>> Before closing IPC server");
+    handle.close();
+    log::debug!(">>>> After closing IPC server");
+    std::mem::drop(buf); // Simulate dropping buf so err_buf has one owner
+    std::mem::drop(callbacks); // Simulate dropping buf so has one owner
 
     // FIXME(#25): given that we are running the compiler directly, there is no need
     // to serialize the error messages -- we should pass them in memory.
