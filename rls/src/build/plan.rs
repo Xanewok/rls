@@ -172,7 +172,7 @@ impl JobQueue {
             }
 
             match super::rustc::rustc(
-                &internals.vfs,
+                Arc::clone(&internals.vfs),
                 &args,
                 job.get_envs(),
                 job.get_cwd().or_else(|| cwd.as_ref().map(|p| &**p)),

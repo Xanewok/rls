@@ -551,7 +551,7 @@ impl Executor for RlsExecutor {
 
         if let BuildResult::Success(_, mut messages, mut analysis, input_files, success) =
             super::rustc::rustc(
-                &self.vfs,
+                Arc::clone(&self.vfs),
                 &args,
                 &envs,
                 cargo_cmd.get_cwd(),
