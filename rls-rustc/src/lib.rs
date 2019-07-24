@@ -7,12 +7,17 @@ extern crate rustc_interface;
 extern crate rustc_save_analysis;
 extern crate syntax;
 
-use rustc::session::config::ErrorOutputType;
-use rustc::session::early_error;
+use rustc::session::config::{ErrorOutputType, Input};
+use rustc::session::{early_error, Session};
 use rustc_driver::{run_compiler, Callbacks, Compilation};
 use rustc_interface::interface;
 
 use std::{env, process};
+use std::path::{Path, PathBuf};
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
+
+use serde::Serialize;
 
 #[cfg(feature = "ipc")]
 mod ipc;
@@ -98,32 +103,37 @@ impl Callbacks for ShimCalls {
 
         use rustc_save_analysis::CallbackHandler;
 
-        // let sess = compiler.session();
+        let sess = compiler.session();
         let input = compiler.input();
         let crate_name = compiler.crate_name().unwrap().peek().clone();
 
-        // let cwd = &sess.working_dir.0;
+        let cwd = &sess.working_dir.0;
 
-        // let src_path = match input {
-        //     Input::File(ref name) => Some(name.to_path_buf()),
-        //     Input::Str { .. } => None,
-        // }
-        // .and_then(|path| src_path(Some(cwd), path));
+        let src_path = match input {
+            Input::File(ref name) => Some(name.to_path_buf()),
+            Input::Str { .. } => None,
+        }
+        .and_then(|path| src_path(Some(cwd), path));
 
-        // let krate = Crate {
-        //     name: crate_name.to_owned(),
-        //     src_path,
-        //     disambiguator: sess.local_crate_disambiguator().to_fingerprint().as_value(),
-        //     edition: match sess.edition() {
-        //         RustcEdition::Edition2015 => Edition::Edition2015,
-        //         RustcEdition::Edition2018 => Edition::Edition2018,
-        //     },
-        // };
+        let krate = Crate {
+            name: crate_name.to_owned(),
+            src_path,
+            disambiguator: sess.local_crate_disambiguator().to_fingerprint().as_value(),
+            edition: match sess.edition() {
+                syntax::edition::Edition::Edition2015 => Edition::Edition2015,
+                syntax::edition::Edition::Edition2018 => Edition::Edition2018,
+            },
+        };
 
-        // let mut input_files = self.input_files.lock().unwrap();
-        // for file in fetch_input_files(sess) {
-        //     input_files.entry(file).or_default().insert(krate.clone());
-        // }
+        let mut input_files: HashMap<PathBuf, HashSet<Crate>> = HashMap::new();
+        for file in fetch_input_files(sess) {
+            input_files.entry(file).or_default().insert(krate.clone());
+        }
+        use futures::future::Future;
+        eprintln!(">>> Client: Call input_files");
+        if let Err(e) = client.input_files(input_files).wait() {
+            eprintln!("Can't send input files as part of a compilation callback: {:?}", e);
+        }
 
         // Guaranteed to not be dropped yet in the pipeline thanks to the
         // `config.opts.debugging_opts.save_analysis` value being set to `true`.
@@ -167,4 +177,47 @@ impl Callbacks for ShimCalls {
 
         Compilation::Continue
     }
+}
+
+fn fetch_input_files(sess: &Session) -> Vec<PathBuf> {
+    let cwd = &sess.working_dir.0;
+
+    sess.source_map()
+        .files()
+        .iter()
+        .filter(|fmap| fmap.is_real_file())
+        .filter(|fmap| !fmap.is_imported())
+        .map(|fmap| fmap.name.to_string())
+        .map(|fmap| src_path(Some(cwd), fmap).unwrap())
+        .collect()
+}
+
+pub fn src_path(cwd: Option<&Path>, path: impl AsRef<Path>) -> Option<PathBuf> {
+    let path = path.as_ref();
+
+    Some(match (cwd, path.is_absolute()) {
+        (_, true) => path.to_owned(),
+        (Some(cwd), _) => cwd.join(path),
+        (None, _) => std::env::current_dir().ok()?.join(path),
+    })
+}
+
+/// Build system-agnostic, basic compilation unit
+/// NOTE: Copied from rls/src/build/plan.rs
+#[derive(PartialEq, Eq, Hash, Debug, Clone, Serialize)]
+pub struct Crate {
+    pub name: String,
+    pub src_path: Option<PathBuf>,
+    pub edition: Edition,
+    /// From rustc; mainly used to group other properties used to disambiguate a
+    /// given compilation unit.
+    pub disambiguator: (u64, u64),
+}
+
+// Temporary, until Edition from rustfmt is available
+/// NOTE: Copied from rls/src/build/plan.rs
+#[derive(PartialEq, Eq, Hash, Debug, PartialOrd, Ord, Copy, Clone, Serialize)]
+pub enum Edition {
+    Edition2015,
+    Edition2018,
 }

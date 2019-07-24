@@ -101,7 +101,7 @@ pub(crate) fn rustc(
     let analysis = Arc::clone(&callbacks.analysis);
     let input_files = Arc::clone(&callbacks.input_files);
 
-    let ipc_server = super::ipc::start_with_all(Arc::clone(&vfs), Arc::clone(&analysis));
+    let ipc_server = super::ipc::start_with_all(Arc::clone(&vfs), Arc::clone(&analysis), Arc::clone(&input_files));
     let (endpoint, handle) = ipc_server.unwrap(); // TODO: Handle unwrap
 
     // rustc explicitly panics in `run_compiler()` on compile failure, regardless

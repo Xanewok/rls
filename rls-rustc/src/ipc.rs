@@ -1,5 +1,6 @@
 use std::io;
 use std::path::{Path, PathBuf};
+use std::collections::{HashMap, HashSet};
 
 use failure::Fail;
 use futures::sink::Sink;
@@ -69,10 +70,14 @@ impl FileLoader {
         self.0.call_method("read_file", "String", (path,))
     }
 
-    #[cfg(feature = "ipc")]
     pub fn complete_analysis(&self,  analysis: rls_data::Analysis) -> impl Future<Item = (), Error = RpcError> {
         eprintln!(">>>> Client: complete_analysis({:?})", analysis.compilation.as_ref().map(|comp| comp.output.clone()));
         self.0.call_method("complete_analysis", "()", (analysis,))
+    }
+
+    pub fn input_files(&self, input_files: HashMap<PathBuf, HashSet<crate::Crate>>) -> impl Future<Item = (), Error = RpcError> {
+        eprintln!(">>>> Client: input_files({:?})", &input_files);
+        self.0.call_method("input_files", "()", (input_files,))
     }
 }
 

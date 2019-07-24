@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::ops::DerefMut;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -10,17 +11,23 @@ use jsonrpc_derive::rpc;
 use jsonrpc_ipc_server::{ServerBuilder, CloseHandle};
 use rls_vfs::{FileContents, Vfs};
 
+use crate::build::plan::Crate;
+
 lazy_static::lazy_static! {
     static ref IPC_SERVER: Arc<Mutex<Option<jsonrpc_ipc_server::Server>>> = Arc::default();
 }
 
 /// TODO: Document me
-pub fn start_with_all(vfs: Arc<Vfs>, analysis: Arc<Mutex<Option<rls_data::Analysis>>>) -> Result<(PathBuf, CloseHandle), ()> {
+pub fn start_with_all(
+    vfs: Arc<Vfs>,
+    analysis: Arc<Mutex<Option<rls_data::Analysis>>>,
+    input_files: Arc<Mutex<HashMap<PathBuf, HashSet<Crate>>>>,
+) -> Result<(PathBuf, CloseHandle), ()> {
     use callbacks::CallbackRpc;
 
     let mut io = IoHandler::new();
     io.extend_with(vfs.to_delegate());
-    io.extend_with(callbacks::CallbackHandler { analysis }.to_delegate());
+    io.extend_with(callbacks::CallbackHandler { analysis, input_files }.to_delegate());
 
     self::start_with_handler(io)
 }
@@ -139,24 +146,38 @@ impl FileLoaderRpc for Arc<Vfs> {
 
 mod callbacks {
     use super::{Arc, Mutex};
+    use super::{HashMap, HashSet};
+    use super::{PathBuf};
     use super::{rpc, RpcResult};
+    use crate::build::plan::Crate;
 
     #[rpc]
     pub trait CallbackRpc {
         #[rpc(name = "complete_analysis")]
         fn complete_analysis(&self, analysis: rls_data::Analysis) -> RpcResult<()>;
+
+        #[rpc(name = "input_files")]
+        fn input_files(&self, input_files: HashMap<PathBuf, HashSet<Crate>>) -> RpcResult<()>;
     }
 
     pub struct CallbackHandler {
         pub analysis: Arc<Mutex<Option<rls_data::Analysis>>>,
-        // TODO: Implement me
-        // input_files: Arc<Mutex<HashMap<PathBuf, HashSet<Crate>>>>,
+        pub input_files: Arc<Mutex<HashMap<PathBuf, HashSet<Crate>>>>,
     }
 
     impl CallbackRpc for CallbackHandler {
         fn complete_analysis(&self, analysis: rls_data::Analysis) -> RpcResult<()> {
             log::debug!(">>>> Server: complete_analysis({:?})", analysis.compilation.as_ref().map(|comp| comp.output.clone()));
             *self.analysis.lock().unwrap() = Some(analysis);
+            Ok(())
+        }
+
+        fn input_files(&self, input_files: HashMap<PathBuf, HashSet<Crate>>) -> RpcResult<()> {
+            log::debug!(">>>> Server: input_files({:?})", &input_files);
+            let mut current_files = self.input_files.lock().unwrap();
+            for (file, crates) in input_files {
+                current_files.entry(file).or_default().extend(crates);
+            }
             Ok(())
         }
     }
