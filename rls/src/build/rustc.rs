@@ -82,8 +82,6 @@ pub(crate) fn rustc(
     let (guard, _) = env_lock.lock();
     let restore_env = Environment::push_with_lock(&local_envs, cwd, guard);
 
-    let buf = Arc::new(Mutex::new(vec![]));
-    let err_buf = Arc::clone(&buf);
     let args: Vec<_> = if cfg!(feature = "clippy") && clippy_preference != ClippyPreference::Off {
         // Allow feature gating in the same way as `cargo clippy`
         let mut clippy_args = vec!["--cfg".to_owned(), r#"feature="cargo-clippy""#.to_owned()];
@@ -136,22 +134,23 @@ pub(crate) fn rustc(
     cmd.args(args.into_iter().skip(1));
     cmd.envs(local_envs.clone().into_iter().filter_map(|(k, v)| v.map(|v| (k, v))));
     log::debug!(">>>> About to spawn a separate rustc");
-    let result = cmd.status();
-    let result = result
-        .map_err(|_| ())
-        .and_then(|exit| if exit.code() == Some(0) { Ok(()) } else { Err(()) });
+    let output = cmd.output().map_err(|_| ());
+    let result = match &output {
+        Ok(output) if output.status.code() == Some(0) => Ok(()),
+        _ => Err(()),
+    };
+    // NOTE: Make sure that we pass JSON error format
+    let stderr = output.map(|out| out.stderr).unwrap_or_default();
 
     log::debug!(">>>> Before closing IPC server");
     handle.close();
     log::debug!(">>>> After closing IPC server");
-    std::mem::drop(buf); // Simulate dropping buf so err_buf has one owner
     std::mem::drop(callbacks); // Simulate dropping buf so has one owner
 
     // FIXME(#25): given that we are running the compiler directly, there is no need
     // to serialize the error messages -- we should pass them in memory.
-    let err_buf = Arc::try_unwrap(err_buf).unwrap().into_inner().unwrap();
-    let err_buf = String::from_utf8(err_buf).unwrap();
-    let stderr_json_msgs: Vec<_> = err_buf.lines().map(String::from).collect();
+    let stderr = String::from_utf8(stderr).unwrap();
+    let stderr_json_msgs: Vec<_> = stderr.lines().map(String::from).collect();
 
     let analysis = analysis.lock().unwrap().clone();
     let analysis = analysis.map(|analysis| vec![analysis]).unwrap_or_else(Vec::new);
