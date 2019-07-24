@@ -9,7 +9,7 @@ extern crate syntax;
 
 use rustc::session::config::ErrorOutputType;
 use rustc::session::early_error;
-use rustc_driver::{run_compiler, Callbacks};
+use rustc_driver::{run_compiler, Callbacks, Compilation};
 use rustc_interface::interface;
 
 use std::{env, process};
@@ -90,10 +90,10 @@ impl Callbacks for ShimCalls {
         config.opts.debugging_opts.save_analysis = true;
     }
 
-    fn after_analysis(&mut self, compiler: &interface::Compiler) -> bool {
+    fn after_analysis(&mut self, compiler: &interface::Compiler) -> Compilation {
         let client = match self.0.as_ref() {
             Some(client) => client,
-            None => return true,
+            None => return Compilation::Continue,
         };
 
         use rustc_save_analysis::CallbackHandler;
@@ -165,6 +165,6 @@ impl Callbacks for ShimCalls {
             );
         });
 
-        true
+        Compilation::Continue
     }
 }
