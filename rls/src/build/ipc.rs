@@ -43,11 +43,11 @@ pub fn start(vfs: Arc<Vfs>) -> Result<(PathBuf, CloseHandle), ()> {
 
 /// Spins up an IPC server in the background.
 pub fn start_with_handler(io: IoHandler) -> Result<(PathBuf, CloseHandle), ()> {
-    let server = IPC_SERVER.lock().map_err(|_| ())?;
-    if server.is_some() {
-        log::trace!("Can't start IPC server twice");
-        return Err(());
-    }
+    // let server = IPC_SERVER.lock().map_err(|_| ())?;
+    // if server.is_some() {
+    //     log::trace!("Can't start IPC server twice");
+    //     return Err(());
+    // }
 
     let endpoint_path = gen_endpoint_path();
     let (tx, rx) = std::sync::mpsc::channel();

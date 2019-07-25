@@ -82,20 +82,20 @@ pub(crate) fn rustc(
     let (guard, _) = env_lock.lock();
     let restore_env = Environment::push_with_lock(&local_envs, cwd, guard);
 
-    let args: Vec<_> = if cfg!(feature = "clippy") && clippy_preference != ClippyPreference::Off {
-        // Allow feature gating in the same way as `cargo clippy`
-        let mut clippy_args = vec!["--cfg".to_owned(), r#"feature="cargo-clippy""#.to_owned()];
+    // let args: Vec<_> = if cfg!(feature = "clippy") && clippy_preference != ClippyPreference::Off {
+    //     // Allow feature gating in the same way as `cargo clippy`
+    //     let mut clippy_args = vec!["--cfg".to_owned(), r#"feature="cargo-clippy""#.to_owned()];
 
-        if clippy_preference == ClippyPreference::OptIn {
-            // `OptIn`: Require explicit `#![warn(clippy::all)]` annotation in each workspace crate
-            clippy_args.push("-A".to_owned());
-            clippy_args.push("clippy::all".to_owned());
-        }
+    //     if clippy_preference == ClippyPreference::OptIn {
+    //         // `OptIn`: Require explicit `#![warn(clippy::all)]` annotation in each workspace crate
+    //         clippy_args.push("-A".to_owned());
+    //         clippy_args.push("clippy::all".to_owned());
+    //     }
 
-        args.iter().map(ToOwned::to_owned).chain(clippy_args).collect()
-    } else {
-        args.to_owned()
-    };
+    //     args.iter().map(ToOwned::to_owned).chain(clippy_args).collect()
+    // } else {
+    //     args.to_owned()
+    // };
 
     let mut callbacks = RlsRustcCalls { clippy_preference, ..Default::default() };
     let analysis = Arc::clone(&callbacks.analysis);
@@ -131,6 +131,7 @@ pub(crate) fn rustc(
     // `rls_rustc::run()`.
     cmd.env(crate::RUSTC_SHIM_ENV_VAR_NAME, "1");
     cmd.env("RLS_IPC_ENDPOINT", &endpoint);
+    cmd.env("RLS_CLIPPY_PREFERENCE", clippy_preference.to_string());
     cmd.args(args.into_iter().skip(1));
     cmd.envs(local_envs.clone().into_iter().filter_map(|(k, v)| v.map(|v| (k, v))));
     log::debug!(">>>> About to spawn a separate rustc");
@@ -155,8 +156,9 @@ pub(crate) fn rustc(
     let analysis = analysis.lock().unwrap().clone();
     let analysis = analysis.map(|analysis| vec![analysis]).unwrap_or_else(Vec::new);
     log::debug!("rustc: analysis read successfully?: {}", !analysis.is_empty());
-
-    let input_files = Arc::try_unwrap(input_files).unwrap().into_inner().unwrap();
+    // TODO: Use Arc::try_unwrap
+    let input_files = input_files.lock().unwrap().clone();
+    // let input_files = Arc::try_unwrap(input_files).expect("Can't get unique ref to input_files").into_inner().unwrap();
 
     let cwd = cwd.unwrap_or_else(|| restore_env.get_old_cwd()).to_path_buf();
 

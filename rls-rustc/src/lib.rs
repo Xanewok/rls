@@ -3,6 +3,7 @@
 extern crate env_logger;
 extern crate rustc;
 extern crate rustc_driver;
+extern crate rustc_plugin;
 extern crate rustc_interface;
 extern crate rustc_save_analysis;
 extern crate syntax;
@@ -21,9 +22,17 @@ use serde::Serialize;
 
 #[cfg(feature = "ipc")]
 mod ipc;
+#[cfg(feature = "clippy")]
+mod clippy;
 
 pub fn run() {
     let _ = env_logger::try_init(); // TODO: Remove me
+
+    #[cfg(feature = "clippy")]
+    let clippy_preference = env::var("RLS_CLIPPY_PREFERENCE").ok()
+        .and_then(|pref| <clippy::ClippyPreference as std::str::FromStr>::from_str(&pref).ok());
+    #[cfg(feature = "clippy")]
+    dbg!(&clippy_preference);
 
     #[cfg(feature = "ipc")]
     let (mut shim_calls, file_loader, runtime) = {
@@ -35,9 +44,9 @@ pub fn run() {
                     let reactor = rt.reactor().clone();
                     let client: ipc::FileLoader = rt.block_on(ipc::connect(endpoint.into(), reactor)).expect("Couldn't connecto IPC endpoint");
 
-                    (ShimCalls(Some(client.clone())), client.into_boxed())
+                    (ShimCalls { client: Some(client.clone()), clippy_preference }, client.into_boxed())
                 },
-                None => (ShimCalls(None), None),
+                None => (ShimCalls::default(), None),
             };
 
             (client, file_loader, rt)
@@ -61,19 +70,26 @@ pub fn run() {
     #[cfg(not(feature = "ipc"))]
     let (mut shim_calls, file_loader) = (ShimCalls, None);
 
-    let result = rustc_driver::report_ices_to_stderr_if_any(|| {
-        let args = env::args_os()
-            .enumerate()
-            .map(|(i, arg)| {
-                arg.into_string().unwrap_or_else(|arg| {
-                    early_error(
-                        ErrorOutputType::default(),
-                        &format!("Argument {} is not valid Unicode: {:?}", i, arg),
-                    )
-                })
+    let args = env::args_os()
+        .enumerate()
+        .map(|(i, arg)| {
+            arg.into_string().unwrap_or_else(|arg| {
+                early_error(
+                    ErrorOutputType::default(),
+                    &format!("Argument {} is not valid Unicode: {:?}", i, arg),
+                )
             })
-            .collect::<Vec<_>>();
+        })
+        .collect::<Vec<_>>();
 
+    #[cfg(feature = "clippy")]
+    let args = match clippy_preference {
+        Some(preference) => clippy::adjust_args(args, preference),
+        None => args,
+    };
+    dbg!(&args);
+
+    let result = rustc_driver::report_ices_to_stderr_if_any(|| {
         run_compiler(&args, &mut shim_calls, file_loader, None)
     })
     .and_then(|result| result);
@@ -84,8 +100,14 @@ pub fn run() {
     process::exit(result.is_err() as i32);
 }
 
-#[cfg(feature = "ipc")]
-struct ShimCalls(Option<ipc::FileLoader>);
+#[cfg(any(feature = "ipc", feature = "clippy"))]
+#[derive(Default)]
+struct ShimCalls {
+    #[cfg(feature = "ipc")]
+    client: Option<ipc::FileLoader>,
+    #[cfg(feature = "clippy")]
+    clippy_preference: Option<clippy::ClippyPreference>,
+}
 #[cfg(not(feature = "ipc"))]
 struct ShimCalls;
 
@@ -95,8 +117,22 @@ impl Callbacks for ShimCalls {
         config.opts.debugging_opts.save_analysis = true;
     }
 
+    fn after_parsing(&mut self, _compiler: &interface::Compiler) -> Compilation {
+        #[cfg(feature = "clippy")]
+        {
+            match self.clippy_preference {
+                Some(preference) if preference != clippy::ClippyPreference::Off => {
+                    clippy::clippy_after_parse_callback(_compiler);
+                },
+                _ => {}
+            }
+        }
+
+        Compilation::Continue
+    }
+
     fn after_analysis(&mut self, compiler: &interface::Compiler) -> Compilation {
-        let client = match self.0.as_ref() {
+        let client = match self.client.as_ref() {
             Some(client) => client,
             None => return Compilation::Continue,
         };
