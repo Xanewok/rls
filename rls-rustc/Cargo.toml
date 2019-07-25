@@ -22,6 +22,7 @@ env_logger = "0.6"
 log = "0.4"
 failure = "0.1"
 rand = "0.6"
+clippy_lints = { git = "https://github.com/rust-lang/rust-clippy", rev = "f8e04ff3974f62997a7b73c2f39b726202b5a0dd", optional = true }
 parity-tokio-ipc = { version = "0.1", optional = true }
 tokio = { version = "0.1", optional = true }
 futures = { version = "0.1", optional = true }
@@ -35,4 +36,5 @@ rls-data = { version = "0.19", optional = true }
 
 [features]
 ipc = ["parity-tokio-ipc", "tokio", "futures", "jsonrpc-ipc-server", "jsonrpc-core-client", "jsonrpc-derive", "jsonrpc-core", "serde", "jsonrpc-server-utils", "rls-data"]
+clippy = ["clippy_lints"]
 default = ["ipc"] # TODO: Remove me
