@@ -3,34 +3,10 @@ use std::path::{Path, PathBuf};
 use std::collections::{HashMap, HashSet};
 
 use failure::Fail;
-use futures::sink::Sink;
-use futures::stream::Stream;
 use futures::Future;
-use jsonrpc_core_client::transports::duplex;
 use jsonrpc_core_client::{RpcChannel, RpcError, TypedClient};
-use jsonrpc_server_utils::codecs::StreamCodec;
-use parity_tokio_ipc::IpcConnection;
-use tokio::codec::Decoder;
 
-/// Connect to a JSON-RPC IPC server.
-pub fn connect<Client: From<RpcChannel>>(
-    path: PathBuf,
-    reactor: tokio::reactor::Handle,
-) -> impl Future<Item = Client, Error = io::Error> {
-    eprintln!("ipc: Attempting to connect to {}", path.display());
-    let connection = IpcConnection::connect(path, &reactor).unwrap();
-
-    futures::lazy(move || {
-        let (sink, stream) = StreamCodec::stream_incoming().framed(connection).split();
-        let sink = sink.sink_map_err(|e| RpcError::Other(e.into()));
-        let stream = stream.map_err(|e| RpcError::Other(e.into()));
-
-        let (client, sender) = duplex(sink, stream);
-
-        tokio::spawn(client.map_err(|e| log::warn!("IPC client error: {:?}", e)));
-        Ok(sender.into())
-    })
-}
+pub use jsonrpc_core_client::transports::ipc::connect;
 
 #[derive(Clone)]
 pub struct FileLoader(TypedClient);
@@ -45,8 +21,12 @@ impl FileLoader {
     pub fn spawn(path: PathBuf, runtime: &mut tokio::runtime::Runtime) -> io::Result<Self> {
         #[allow(deprecated)] // Windows doesn't work with lazily-bound reactors
         let reactor = runtime.reactor().clone();
+        let connection = self::connect(path, &reactor)?;
 
-        Ok(runtime.block_on(connect(path, reactor))?)
+        Ok(
+            runtime.block_on(connection)
+                .map_err(|e| io::Error::new(io::ErrorKind::Other, e.compat()))?
+        )
     }
 
     pub fn into_boxed(self) -> Option<Box<dyn syntax::source_map::FileLoader + Send + Sync>> {

@@ -16,8 +16,8 @@ use rustc_interface::interface;
 use std::{env, process};
 use std::path::{Path, PathBuf};
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
 
+use futures::future::Future;
 use serde::Serialize;
 
 #[cfg(feature = "ipc")]
@@ -26,13 +26,9 @@ mod ipc;
 mod clippy;
 
 pub fn run() {
-    let _ = env_logger::try_init(); // TODO: Remove me
-
     #[cfg(feature = "clippy")]
     let clippy_preference = env::var("RLS_CLIPPY_PREFERENCE").ok()
         .and_then(|pref| <clippy::ClippyPreference as std::str::FromStr>::from_str(&pref).ok());
-    #[cfg(feature = "clippy")]
-    dbg!(&clippy_preference);
 
     #[cfg(feature = "ipc")]
     let (mut shim_calls, file_loader, runtime) = {
@@ -42,9 +38,14 @@ pub fn run() {
                 Some(endpoint) => {
                     #[allow(deprecated)] // Windows doesn't work with lazily-bound reactors
                     let reactor = rt.reactor().clone();
-                    let client: ipc::FileLoader = rt.block_on(ipc::connect(endpoint.into(), reactor)).expect("Couldn't connecto IPC endpoint");
+                    let connection = ipc::connect(endpoint, &reactor).expect("Couldn't connect to IPC endpoint");
+                    let client: ipc::FileLoader = rt.block_on(connection).expect("Couldn't connect to IPC endpoint");
 
-                    (ShimCalls { client: Some(client.clone()), clippy_preference }, client.into_boxed())
+                    (ShimCalls {
+                        client: Some(client.clone()),
+                        #[cfg(feature = "clippy")]
+                        clippy_preference
+                    }, client.into_boxed())
                 },
                 None => (ShimCalls::default(), None),
             };
@@ -165,7 +166,7 @@ impl Callbacks for ShimCalls {
         for file in fetch_input_files(sess) {
             input_files.entry(file).or_default().insert(krate.clone());
         }
-        use futures::future::Future;
+
         eprintln!(">>> Client: Call input_files");
         if let Err(e) = client.input_files(input_files).wait() {
             eprintln!("Can't send input files as part of a compilation callback: {:?}", e);
@@ -197,7 +198,6 @@ impl Callbacks for ShimCalls {
                 None,
                 CallbackHandler {
                     callback: &mut |a| {
-                        use futures::future::Future;
                         eprintln!(">>> Client: Entered CallbackHandler::callback");
                         if let Err(e) = client.complete_analysis(unsafe { ::std::mem::transmute(a.clone()) }).wait() {
                             eprintln!("Can't send analysis as part of a compilation callback: {:?}", e);
