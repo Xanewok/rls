@@ -1,7 +1,6 @@
 //! Copied from rls/src/config.rs
 
 use std::str::FromStr;
-use serde::{Serialize, Deserialize};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ClippyPreference {
