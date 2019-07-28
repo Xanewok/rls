@@ -5,74 +5,64 @@ use std::collections::{HashMap, HashSet};
 use failure::Fail;
 use futures::Future;
 
-pub use rls_ipc::client::{connect, Client, RpcChannel, RpcError};
+use rls_ipc::client::{Client as JointClient, RpcChannel, RpcError};
+use rls_ipc::rpc::file_loader::Client as FileLoaderClient;
+use rls_ipc::rpc::callbacks::Client as CallbacksClient;
+
+pub use rls_ipc::client::connect;
 
 #[derive(Clone)]
-pub struct FileLoader(Client);
+pub struct Client(JointClient);
 
-impl From<RpcChannel> for FileLoader {
+impl From<RpcChannel> for Client {
     fn from(channel: RpcChannel) -> Self {
-        FileLoader(channel.into())
+        Client(channel.into())
     }
 }
 
-impl FileLoader {
-    pub fn spawn(path: PathBuf, runtime: &mut tokio::runtime::Runtime) -> io::Result<Self> {
-        #[allow(deprecated)] // Windows doesn't work with lazily-bound reactors
-        let reactor = runtime.reactor().clone();
-        let connection = self::connect(path, &reactor)?;
+#[derive(Clone)]
+pub struct IpcFileLoader(FileLoaderClient);
 
-        Ok(
-            runtime.block_on(connection)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e.compat()))?
-        )
-    }
-
+impl IpcFileLoader {
     pub fn into_boxed(self) -> Option<Box<dyn syntax::source_map::FileLoader + Send + Sync>> {
         Some(Box::new(self))
     }
 }
 
-impl FileLoader {
-    pub fn file_exists(&self, path: PathBuf) -> impl Future<Item = bool, Error = RpcError> {
-        eprintln!(">>>> Client: file_exists({:?})", &path);
-        self.0.file_loader.file_exists(path)
-        // self.0.call_method("file_exists", "bool", (path,))
+impl syntax::source_map::FileLoader for IpcFileLoader {
+    fn file_exists(&self, path: &Path) -> bool {
+        self.0.file_exists(path.to_owned()).wait().unwrap()
     }
 
-    pub fn abs_path(&self, path: PathBuf) -> impl Future<Item = Option<PathBuf>, Error = RpcError> {
-        eprintln!(">>>> Client: abs_path({:?})", &path);
-        self.0.file_loader.abs_path(path)
+    fn abs_path(&self, path: &Path) -> Option<PathBuf> {
+        self.0.abs_path(path.to_owned()).wait().ok()?
     }
 
-    pub fn read_file(&self, path: PathBuf) -> impl Future<Item = String, Error = RpcError> {
-        eprintln!(">>>> Client: read_file({:?})", &path);
-        self.0.file_loader.read_file(path)
+    fn read_file(&self, path: &Path) -> io::Result<String> {
+        self.0.read_file(path.to_owned())
+            .wait()
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.compat()))
     }
+}
 
-    pub fn complete_analysis(&self,  analysis: rls_data::Analysis) -> impl Future<Item = (), Error = RpcError> {
+#[derive(Clone)]
+pub struct IpcCallbacks(CallbacksClient);
+
+impl IpcCallbacks {
+    pub fn complete_analysis(&self, analysis: rls_data::Analysis) -> impl Future<Item = (), Error = RpcError> {
         eprintln!(">>>> Client: complete_analysis({:?})", analysis.compilation.as_ref().map(|comp| comp.output.clone()));
-        self.0.callbacks.complete_analysis(analysis)
+        self.0.complete_analysis(analysis)
     }
 
     pub fn input_files(&self, input_files: HashMap<PathBuf, HashSet<rls_ipc::rpc::Crate>>) -> impl Future<Item = (), Error = RpcError> {
         eprintln!(">>>> Client: input_files({:?})", &input_files);
-        self.0.callbacks.input_files(input_files)
+        self.0.input_files(input_files)
     }
 }
 
-impl syntax::source_map::FileLoader for FileLoader {
-    fn file_exists(&self, path: &Path) -> bool {
-        self.file_exists(path.to_owned()).wait().unwrap()
-    }
-
-    fn abs_path(&self, path: &Path) -> Option<PathBuf> {
-        self.abs_path(path.to_owned()).wait().ok()?
-    }
-
-    fn read_file(&self, path: &Path) -> io::Result<String> {
-        self.read_file(path.to_owned())
-            .wait()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.compat()))
+impl Client {
+    pub fn split(self) -> (IpcFileLoader, IpcCallbacks) {
+        let JointClient { file_loader, callbacks } = self.0;
+        (IpcFileLoader(file_loader), IpcCallbacks(callbacks))
     }
 }
