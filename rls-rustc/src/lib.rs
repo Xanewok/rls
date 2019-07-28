@@ -3,8 +3,8 @@
 extern crate env_logger;
 extern crate rustc;
 extern crate rustc_driver;
-extern crate rustc_plugin;
 extern crate rustc_interface;
+extern crate rustc_plugin;
 extern crate rustc_save_analysis;
 extern crate syntax;
 
@@ -13,47 +13,40 @@ use rustc::session::{early_error, Session};
 use rustc_driver::{run_compiler, Callbacks, Compilation};
 use rustc_interface::interface;
 
-use std::{env, process};
-use std::path::{Path, PathBuf};
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::{env, process};
 
 use futures::future::Future;
 use rls_ipc::rpc::{Crate, Edition};
 
+mod clippy;
 #[cfg(feature = "ipc")]
 mod ipc;
-mod clippy;
 
 pub fn run() -> Result<(), ()> {
     #[cfg(feature = "ipc")]
     let mut rt = tokio::runtime::Runtime::new().unwrap();
 
-    #[cfg(feature = "clippy")]
     let clippy_preference = clippy::preference();
 
     #[cfg(feature = "ipc")]
-    let (mut shim_calls, file_loader) = {
-        let (client, file_loader) = match std::env::var("RLS_IPC_ENDPOINT").ok() {
-            Some(endpoint) => {
-                #[allow(deprecated)] // Windows doesn't work with lazily-bound reactors
-                let reactor = rt.reactor().clone();
-                let connection = ipc::connect(endpoint, &reactor).expect("Couldn't connect to IPC endpoint");
-                let client: ipc::Client = rt.block_on(connection).expect("Couldn't connect to IPC endpoint");
-                let (file_loader, callbacks) = client.split();
+    let (mut shim_calls, file_loader) = match std::env::var("RLS_IPC_ENDPOINT").ok() {
+        Some(endpoint) => {
+            #[allow(deprecated)] // Windows doesn't work with lazily-bound reactors
+            let reactor = rt.reactor().clone();
+            let connection =
+                ipc::connect(endpoint, &reactor).expect("Couldn't connect to IPC endpoint");
+            let client: ipc::Client =
+                rt.block_on(connection).expect("Couldn't connect to IPC endpoint");
+            let (file_loader, callbacks) = client.split();
 
-                    (ShimCalls {
-                        client: Some(callbacks),
-                    #[cfg(feature = "clippy")]
-                    clippy_preference,
-                    }, file_loader.into_boxed())
-            },
-            None => (ShimCalls::default(), None),
-        };
-
-        (client, file_loader)
+            (ShimCalls { callbacks: Some(callbacks), clippy_preference }, file_loader.into_boxed())
+        }
+        None => (ShimCalls::default(), None),
     };
     #[cfg(not(feature = "ipc"))]
-    let (mut shim_calls, file_loader) = (ShimCalls, None);
+    let (mut shim_calls, file_loader) = (ShimCalls::default(), None);
 
     let args = env::args_os()
         .enumerate()
@@ -88,8 +81,7 @@ pub fn run() -> Result<(), ()> {
 #[derive(Default)]
 struct ShimCalls {
     #[cfg(feature = "ipc")]
-    client: Option<ipc::IpcCallbacks>,
-    #[cfg(feature = "clippy")]
+    callbacks: Option<ipc::IpcCallbacks>,
     clippy_preference: Option<clippy::ClippyPreference>,
 }
 
@@ -104,7 +96,7 @@ impl Callbacks for ShimCalls {
         match self.clippy_preference {
             Some(preference) if preference != clippy::ClippyPreference::Off => {
                 clippy::after_parse_callback(compiler);
-            },
+            }
             _ => {}
         }
 
@@ -112,8 +104,8 @@ impl Callbacks for ShimCalls {
     }
 
     fn after_analysis(&mut self, compiler: &interface::Compiler) -> Compilation {
-        let client = match self.client.as_ref() {
-            Some(client) => client,
+        let callbacks = match self.callbacks.as_ref() {
+            Some(callbacks) => callbacks,
             None => return Compilation::Continue,
         };
 
@@ -147,7 +139,7 @@ impl Callbacks for ShimCalls {
         }
 
         eprintln!(">>> Client: Call input_files");
-        if let Err(e) = client.input_files(input_files).wait() {
+        if let Err(e) = callbacks.input_files(input_files).wait() {
             eprintln!("Can't send input files as part of a compilation callback: {:?}", e);
         }
 
@@ -178,13 +170,13 @@ impl Callbacks for ShimCalls {
                 CallbackHandler {
                     callback: &mut |a| {
                         eprintln!(">>> Client: Entered CallbackHandler::callback");
-                        if let Err(e) = client.complete_analysis(unsafe { ::std::mem::transmute(a.clone()) }).wait() {
-                            eprintln!("Can't send analysis as part of a compilation callback: {:?}", e);
+                        let analysis = unsafe { ::std::mem::transmute(a.clone()) };
+                        if let Err(e) = callbacks.complete_analysis(analysis).wait() {
+                            eprintln!(
+                                "Can't send analysis as part of a compilation callback: {:?}",
+                                e
+                            );
                         }
-                        // tokio::spawn(request.map_err(|_| ())).wait();
-                        // let mut analysis = self.analysis.lock().unwrap();
-                        // let a = unsafe { ::std::mem::transmute(a.clone()) };
-                        // *analysis = Some(a);
                     },
                 },
             );

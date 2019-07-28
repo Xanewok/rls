@@ -1,13 +1,13 @@
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::collections::{HashMap, HashSet};
 
 use failure::Fail;
 use futures::Future;
 
 use rls_ipc::client::{Client as JointClient, RpcChannel, RpcError};
-use rls_ipc::rpc::file_loader::Client as FileLoaderClient;
 use rls_ipc::rpc::callbacks::Client as CallbacksClient;
+use rls_ipc::rpc::file_loader::Client as FileLoaderClient;
 
 pub use rls_ipc::client::connect;
 
@@ -39,7 +39,8 @@ impl syntax::source_map::FileLoader for IpcFileLoader {
     }
 
     fn read_file(&self, path: &Path) -> io::Result<String> {
-        self.0.read_file(path.to_owned())
+        self.0
+            .read_file(path.to_owned())
             .wait()
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e.compat()))
     }
@@ -49,12 +50,21 @@ impl syntax::source_map::FileLoader for IpcFileLoader {
 pub struct IpcCallbacks(CallbacksClient);
 
 impl IpcCallbacks {
-    pub fn complete_analysis(&self, analysis: rls_data::Analysis) -> impl Future<Item = (), Error = RpcError> {
-        eprintln!(">>>> Client: complete_analysis({:?})", analysis.compilation.as_ref().map(|comp| comp.output.clone()));
+    pub fn complete_analysis(
+        &self,
+        analysis: rls_data::Analysis,
+    ) -> impl Future<Item = (), Error = RpcError> {
+        eprintln!(
+            ">>>> Client: complete_analysis({:?})",
+            analysis.compilation.as_ref().map(|comp| comp.output.clone())
+        );
         self.0.complete_analysis(analysis)
     }
 
-    pub fn input_files(&self, input_files: HashMap<PathBuf, HashSet<rls_ipc::rpc::Crate>>) -> impl Future<Item = (), Error = RpcError> {
+    pub fn input_files(
+        &self,
+        input_files: HashMap<PathBuf, HashSet<rls_ipc::rpc::Crate>>,
+    ) -> impl Future<Item = (), Error = RpcError> {
         eprintln!(">>>> Client: input_files({:?})", &input_files);
         self.0.input_files(input_files)
     }
