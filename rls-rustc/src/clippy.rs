@@ -12,11 +12,10 @@ pub enum ClippyPreference {
     On,
 }
 
-// impl Default for ClippyPreference {
-//     fn default() -> Self {
-//         ClippyPreference::OptIn
-//     }
-// }
+pub fn preference() -> Option<ClippyPreference> {
+    std::env::var("RLS_CLIPPY_PREFERENCE").ok()
+        .and_then(|pref| FromStr::from_str(&pref).ok())
+}
 
 /// Permissive deserialization for `ClippyPreference`
 /// "opt-in", "Optin" -> `ClippyPreference::OptIn`
@@ -50,7 +49,7 @@ pub fn adjust_args(args: Vec<String>, preference: ClippyPreference) -> Vec<Strin
 }
 
 #[cfg(feature = "clippy")]
-pub fn clippy_after_parse_callback(compiler: &rustc_interface::interface::Compiler) {
+pub fn after_parse_callback(compiler: &rustc_interface::interface::Compiler) {
     use rustc_plugin::registry::Registry;
 
     let sess = compiler.session();

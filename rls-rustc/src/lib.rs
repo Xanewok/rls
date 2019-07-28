@@ -22,51 +22,35 @@ use rls_ipc::rpc::{Crate, Edition};
 
 #[cfg(feature = "ipc")]
 mod ipc;
-#[cfg(feature = "clippy")]
 mod clippy;
 
-pub fn run() {
+pub fn run() -> Result<(), ()> {
+    #[cfg(feature = "ipc")]
+    let mut rt = tokio::runtime::Runtime::new().unwrap();
+
     #[cfg(feature = "clippy")]
-    let clippy_preference = env::var("RLS_CLIPPY_PREFERENCE").ok()
-        .and_then(|pref| <clippy::ClippyPreference as std::str::FromStr>::from_str(&pref).ok());
+    let clippy_preference = clippy::preference();
 
     #[cfg(feature = "ipc")]
-    let (mut shim_calls, file_loader, runtime) = {
-        let mut rt = tokio::runtime::Runtime::new().unwrap();
-        // (
-            let (client, file_loader) = match env::var("RLS_IPC_ENDPOINT").ok() {
-                Some(endpoint) => {
-                    #[allow(deprecated)] // Windows doesn't work with lazily-bound reactors
-                    let reactor = rt.reactor().clone();
-                    let connection = ipc::connect(endpoint, &reactor).expect("Couldn't connect to IPC endpoint");
-                    let client: ipc::FileLoader = rt.block_on(connection).expect("Couldn't connect to IPC endpoint");
+    let (mut shim_calls, file_loader) = {
+        let (client, file_loader) = match std::env::var("RLS_IPC_ENDPOINT").ok() {
+            Some(endpoint) => {
+                #[allow(deprecated)] // Windows doesn't work with lazily-bound reactors
+                let reactor = rt.reactor().clone();
+                let connection = ipc::connect(endpoint, &reactor).expect("Couldn't connect to IPC endpoint");
+                let client: ipc::Client = rt.block_on(connection).expect("Couldn't connect to IPC endpoint");
+                let (file_loader, callbacks) = client.split();
 
                     (ShimCalls {
-                        client: Some(client.clone()),
-                        #[cfg(feature = "clippy")]
-                        clippy_preference
-                    }, client.into_boxed())
-                },
-                None => (ShimCalls::default(), None),
-            };
+                        client: Some(callbacks),
+                    #[cfg(feature = "clippy")]
+                    clippy_preference,
+                    }, file_loader.into_boxed())
+            },
+            None => (ShimCalls::default(), None),
+        };
 
-            (client, file_loader, rt)
-
-            // env::var("RLS_IPC_ENDPOINT")
-            //     .ok()
-            //     .map(|endpoint| {
-            //         #[allow(deprecated)] // Windows doesn't work with lazily-bound reactors
-            //         let reactor = rt.reactor().clone();
-            //         let client: ipc::FileLoader = rt.block_on(ipc::connect(endpoint.into(), reactor)).expect("Couldn't connecto IPC endpoint");
-            //         (client.clone(), client.into_boxed())
-            //         // ipc::FileLoader::spawn(endpoint.into(), &mut rt)
-            //         //     .map_err(|e| log::warn!("Couldn't connect to IPC endpoint: {:?}", e))
-            //             // .ok()
-            //     })
-            //     // .map(ipc::FileLoader::into_boxed)
-            //     .unwrap_or(None),
-            // rt,
-        // )
+        (client, file_loader)
     };
     #[cfg(not(feature = "ipc"))]
     let (mut shim_calls, file_loader) = (ShimCalls, None);
@@ -96,21 +80,18 @@ pub fn run() {
     .and_then(|result| result);
 
     #[cfg(feature = "ipc")]
-    futures::future::Future::wait(runtime.shutdown_now()).unwrap();
+    std::mem::drop(rt);
 
     process::exit(result.is_err() as i32);
 }
 
-#[cfg(any(feature = "ipc", feature = "clippy"))]
 #[derive(Default)]
 struct ShimCalls {
     #[cfg(feature = "ipc")]
-    client: Option<ipc::FileLoader>,
+    client: Option<ipc::IpcCallbacks>,
     #[cfg(feature = "clippy")]
     clippy_preference: Option<clippy::ClippyPreference>,
 }
-#[cfg(not(feature = "ipc"))]
-struct ShimCalls;
 
 impl Callbacks for ShimCalls {
     fn config(&mut self, config: &mut interface::Config) {
@@ -118,15 +99,13 @@ impl Callbacks for ShimCalls {
         config.opts.debugging_opts.save_analysis = true;
     }
 
-    fn after_parsing(&mut self, _compiler: &interface::Compiler) -> Compilation {
-        #[cfg(feature = "clippy")]
-        {
-            match self.clippy_preference {
-                Some(preference) if preference != clippy::ClippyPreference::Off => {
-                    clippy::clippy_after_parse_callback(_compiler);
-                },
-                _ => {}
-            }
+    #[cfg(feature = "clippy")]
+    fn after_parsing(&mut self, compiler: &interface::Compiler) -> Compilation {
+        match self.clippy_preference {
+            Some(preference) if preference != clippy::ClippyPreference::Off => {
+                clippy::after_parse_callback(compiler);
+            },
+            _ => {}
         }
 
         Compilation::Continue
