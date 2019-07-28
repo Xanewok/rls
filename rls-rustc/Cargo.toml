@@ -20,8 +20,9 @@ futures = { version = "0.1", optional = true }
 jsonrpc-core-client = { git = "https://github.com/paritytech/jsonrpc", branch = "master", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 rls-data = { version = "0.19", optional = true }
+rls-ipc = { path = "../rls-ipc", optional = true }
 
 [features]
-ipc = ["tokio", "futures", "serde", "jsonrpc-core-client", "jsonrpc-core-client/ipc", "rls-data"]
 clippy = ["clippy_lints"]
+ipc = ["tokio", "futures", "serde", "rls-data", "rls-ipc/client"]
 default = ["ipc"] # TODO: Remove me

@@ -6,16 +6,13 @@ use std::sync::Mutex;
 use std::time::Duration;
 use std::{env, fs};
 
-use jsonrpc_core::{Error, ErrorCode, IoHandler, Result as RpcResult};
-use jsonrpc_derive::rpc;
-use jsonrpc_ipc_server::{ServerBuilder, CloseHandle};
+use jsonrpc_core::{ErrorCode, IoHandler};
 use rls_vfs::{FileContents, Vfs};
 
 use crate::build::plan::Crate;
 
-lazy_static::lazy_static! {
-    static ref IPC_SERVER: Arc<Mutex<Option<jsonrpc_ipc_server::Server>>> = Arc::default();
-}
+use rls_ipc::rpc::{self, Error, Result as RpcResult};
+use rls_ipc::server::{ServerBuilder, CloseHandle};
 
 /// TODO: Document me
 pub fn start_with_all(
@@ -23,10 +20,11 @@ pub fn start_with_all(
     analysis: Arc<Mutex<Option<rls_data::Analysis>>>,
     input_files: Arc<Mutex<HashMap<PathBuf, HashSet<Crate>>>>,
 ) -> Result<(PathBuf, CloseHandle), ()> {
-    use callbacks::CallbackRpc;
+    use rls_ipc::rpc::callbacks::Server as _;
+    use rls_ipc::rpc::file_loader::Server as _;
 
     let mut io = IoHandler::new();
-    io.extend_with(vfs.to_delegate());
+    io.extend_with(ArcVfs(vfs).to_delegate());
     io.extend_with(callbacks::CallbackHandler { analysis, input_files }.to_delegate());
 
     self::start_with_handler(io)
@@ -36,19 +34,14 @@ pub fn start_with_all(
 /// VFS, which is required for out-of-process rustc compilation.
 pub fn start(vfs: Arc<Vfs>) -> Result<(PathBuf, CloseHandle), ()> {
     let mut io = IoHandler::new();
-    io.extend_with(vfs.to_delegate());
+    use rls_ipc::rpc::file_loader::Server as _;
+    io.extend_with(ArcVfs(vfs).to_delegate());
 
     self::start_with_handler(io)
 }
 
 /// Spins up an IPC server in the background.
 pub fn start_with_handler(io: IoHandler) -> Result<(PathBuf, CloseHandle), ()> {
-    // let server = IPC_SERVER.lock().map_err(|_| ())?;
-    // if server.is_some() {
-    //     log::trace!("Can't start IPC server twice");
-    //     return Err(());
-    // }
-
     let endpoint_path = gen_endpoint_path();
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn({
@@ -80,16 +73,6 @@ pub fn start_with_handler(io: IoHandler) -> Result<(PathBuf, CloseHandle), ()> {
         .map_err(|_| ())
 }
 
-#[allow(clippy::unit_arg)]
-#[allow(dead_code)]
-pub fn shutdown() -> Result<(), ()> {
-    let mut server = IPC_SERVER.lock().map_err(|_| ())?;
-    match server.deref_mut().take() {
-        Some(server) => Ok(server.close()),
-        None => Err(()),
-    }
-}
-
 fn gen_endpoint_path() -> String {
     let num: u64 = rand::Rng::gen(&mut rand::thread_rng());
     if cfg!(windows) {
@@ -103,22 +86,9 @@ fn rpc_error(msg: &str) -> Error {
     Error { code: ErrorCode::InternalError, message: msg.to_owned(), data: None }
 }
 
-#[rpc]
-pub trait FileLoaderRpc {
-    /// Query the existence of a file.
-    #[rpc(name = "file_exists")]
-    fn file_exists(&self, path: PathBuf) -> RpcResult<bool>;
+struct ArcVfs(Arc<Vfs>);
 
-    /// Returns an absolute path to a file, if possible.
-    #[rpc(name = "abs_path")]
-    fn abs_path(&self, path: PathBuf) -> RpcResult<Option<PathBuf>>;
-
-    /// Read the contents of an UTF-8 file into memory.
-    #[rpc(name = "read_file")]
-    fn read_file(&self, path: PathBuf) -> RpcResult<String>;
-}
-
-impl FileLoaderRpc for Arc<Vfs> {
+impl rpc::file_loader::Rpc for ArcVfs {
     fn file_exists(&self, path: PathBuf) -> RpcResult<bool> {
         log::debug!(">>>> Server: file_exists({:?})", path);
         // Copied from syntax::source_map::RealFileLoader
@@ -135,7 +105,7 @@ impl FileLoaderRpc for Arc<Vfs> {
     }
     fn read_file(&self, path: PathBuf) -> RpcResult<String> {
         log::debug!(">>>> Server: read_file({:?})", path);
-        self.load_file(&path).map_err(|e| rpc_error(&e.to_string())).and_then(|contents| {
+        self.0.load_file(&path).map_err(|e| rpc_error(&e.to_string())).and_then(|contents| {
             match contents {
                 FileContents::Text(text) => Ok(text),
                 FileContents::Binary(..) => Err(rpc_error("File is binary")),
@@ -149,34 +119,38 @@ mod callbacks {
     use super::{HashMap, HashSet};
     use super::{PathBuf};
     use super::{rpc, RpcResult};
-    use crate::build::plan::Crate;
-
-    #[rpc]
-    pub trait CallbackRpc {
-        #[rpc(name = "complete_analysis")]
-        fn complete_analysis(&self, analysis: rls_data::Analysis) -> RpcResult<()>;
-
-        #[rpc(name = "input_files")]
-        fn input_files(&self, input_files: HashMap<PathBuf, HashSet<Crate>>) -> RpcResult<()>;
+    // use crate::build::plan::Crate;
+    impl From<rls_ipc::rpc::Crate> for crate::build::plan::Crate {
+        fn from(krate: rls_ipc::rpc::Crate) -> Self {
+            Self {
+                name: krate.name,
+                src_path: krate.src_path,
+                edition: match krate.edition {
+                    rls_ipc::rpc::Edition::Edition2015 => crate::build::plan::Edition::Edition2015,
+                    rls_ipc::rpc::Edition::Edition2018 => crate::build::plan::Edition::Edition2018,
+                },
+                disambiguator: krate.disambiguator,
+            }
+        }
     }
 
     pub struct CallbackHandler {
         pub analysis: Arc<Mutex<Option<rls_data::Analysis>>>,
-        pub input_files: Arc<Mutex<HashMap<PathBuf, HashSet<Crate>>>>,
+        pub input_files: Arc<Mutex<HashMap<PathBuf, HashSet<crate::build::plan::Crate>>>>,
     }
 
-    impl CallbackRpc for CallbackHandler {
+    impl rpc::callbacks::Rpc for CallbackHandler {
         fn complete_analysis(&self, analysis: rls_data::Analysis) -> RpcResult<()> {
             log::debug!(">>>> Server: complete_analysis({:?})", analysis.compilation.as_ref().map(|comp| comp.output.clone()));
             *self.analysis.lock().unwrap() = Some(analysis);
             Ok(())
         }
 
-        fn input_files(&self, input_files: HashMap<PathBuf, HashSet<Crate>>) -> RpcResult<()> {
+        fn input_files(&self, input_files: HashMap<PathBuf, HashSet<rls_ipc::rpc::Crate>>) -> RpcResult<()> {
             log::debug!(">>>> Server: input_files({:?})", &input_files);
             let mut current_files = self.input_files.lock().unwrap();
             for (file, crates) in input_files {
-                current_files.entry(file).or_default().extend(crates);
+                current_files.entry(file).or_default().extend(crates.into_iter().map(From::from));
             }
             Ok(())
         }

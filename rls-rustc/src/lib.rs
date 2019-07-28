@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::collections::{HashMap, HashSet};
 
 use futures::future::Future;
-use serde::Serialize;
+use rls_ipc::rpc::{Crate, Edition};
 
 #[cfg(feature = "ipc")]
 mod ipc;
@@ -236,24 +236,4 @@ pub fn src_path(cwd: Option<&Path>, path: impl AsRef<Path>) -> Option<PathBuf> {
         (Some(cwd), _) => cwd.join(path),
         (None, _) => std::env::current_dir().ok()?.join(path),
     })
-}
-
-/// Build system-agnostic, basic compilation unit
-/// NOTE: Copied from rls/src/build/plan.rs
-#[derive(PartialEq, Eq, Hash, Debug, Clone, Serialize)]
-pub struct Crate {
-    pub name: String,
-    pub src_path: Option<PathBuf>,
-    pub edition: Edition,
-    /// From rustc; mainly used to group other properties used to disambiguate a
-    /// given compilation unit.
-    pub disambiguator: (u64, u64),
-}
-
-// Temporary, until Edition from rustfmt is available
-/// NOTE: Copied from rls/src/build/plan.rs
-#[derive(PartialEq, Eq, Hash, Debug, PartialOrd, Ord, Copy, Clone, Serialize)]
-pub enum Edition {
-    Edition2015,
-    Edition2018,
 }

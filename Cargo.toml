@@ -27,6 +27,7 @@ rls-data = "0.19"
 rls-rustc = { version = "0.6.0", path = "rls-rustc" }
 rls-span = "0.5"
 rls-vfs = "0.8"
+rls-ipc = { version = "0.1.0", path = "rls-ipc", optional = true }
 
 cargo = { git = "https://github.com/rust-lang/cargo", rev = "1f74bdf4494f4d51dbe3a6af5474e39c8d194ad6" }
 cargo_metadata = "0.8"
@@ -82,5 +83,5 @@ rustc_tools_util = "0.2"
 
 [features]
 clippy = ["clippy_lints", "rls-rustc/clippy"]
-ipc = ["tokio", "futures", "jsonrpc-ipc-server", "jsonrpc-core-client", "jsonrpc-derive"]
+ipc = ["tokio", "futures", "rls-ipc/server"]
 default = ["ipc"]
