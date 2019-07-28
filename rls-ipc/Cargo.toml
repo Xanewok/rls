@@ -1,0 +1,21 @@
+[package]
+name = "rls-ipc"
+version = "0.1.0"
+authors = ["Igor Matuszewski <Xanewok@gmail.com>"]
+edition = "2018"
+description = "Inter-process communication (IPC) layer between RLS and rustc"
+license = "Apache-2.0/MIT"
+repository = "https://github.com/rust-lang/rls"
+categories = ["development-tools"]
+
+[dependencies]
+jsonrpc-core = { git = "https://github.com/paritytech/jsonrpc", branch = "master" }
+jsonrpc-core-client = { git = "https://github.com/paritytech/jsonrpc", branch = "master" }
+jsonrpc-derive = { git = "https://github.com/paritytech/jsonrpc", branch = "master" }
+jsonrpc-ipc-server = { git = "https://github.com/paritytech/jsonrpc", branch = "master", optional = true }
+rls-data = "0.19"
+serde = { version = "1.0", features = ["derive"] }
+
+[features]
+client = ["jsonrpc-core-client/ipc"]
+server = ["jsonrpc-ipc-server"]
