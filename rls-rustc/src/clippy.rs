@@ -13,8 +13,7 @@ pub enum ClippyPreference {
 }
 
 pub fn preference() -> Option<ClippyPreference> {
-    std::env::var("RLS_CLIPPY_PREFERENCE").ok()
-        .and_then(|pref| FromStr::from_str(&pref).ok())
+    std::env::var("RLS_CLIPPY_PREFERENCE").ok().and_then(|pref| FromStr::from_str(&pref).ok())
 }
 
 /// Permissive deserialization for `ClippyPreference`
