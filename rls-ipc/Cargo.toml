@@ -9,10 +9,10 @@ repository = "https://github.com/rust-lang/rls"
 categories = ["development-tools"]
 
 [dependencies]
-jsonrpc-core = { git = "https://github.com/paritytech/jsonrpc", branch = "master" }
-jsonrpc-core-client = { git = "https://github.com/paritytech/jsonrpc", branch = "master" }
-jsonrpc-derive = { git = "https://github.com/paritytech/jsonrpc", branch = "master" }
-jsonrpc-ipc-server = { git = "https://github.com/paritytech/jsonrpc", branch = "master", optional = true }
+jsonrpc-core = "13"
+jsonrpc-core-client = "13"
+jsonrpc-derive = "13"
+jsonrpc-ipc-server = { version = "13", optional = true }
 rls-data = "0.19"
 serde = { version = "1.0", features = ["derive"] }
 
