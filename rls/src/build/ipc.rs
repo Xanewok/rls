@@ -16,7 +16,7 @@ use rls_ipc::server::{ServerBuilder, CloseHandle};
 
 /// TODO: Document me
 pub fn start_with_all(
-    vfs: Arc<Vfs>,
+    changed_files: HashMap<PathBuf, String>,
     analysis: Arc<Mutex<Option<rls_data::Analysis>>>,
     input_files: Arc<Mutex<HashMap<PathBuf, HashSet<Crate>>>>,
 ) -> Result<(PathBuf, CloseHandle), ()> {
@@ -24,7 +24,7 @@ pub fn start_with_all(
     use rls_ipc::rpc::file_loader::Server as _;
 
     let mut io = IoHandler::new();
-    io.extend_with(ArcVfs(vfs).to_delegate());
+    io.extend_with(ChangedFiles(changed_files).to_delegate());
     io.extend_with(callbacks::CallbackHandler { analysis, input_files }.to_delegate());
 
     self::start_with_handler(io)
@@ -154,5 +154,35 @@ mod callbacks {
             }
             Ok(())
         }
+    }
+}
+
+
+pub struct ChangedFiles(HashMap<PathBuf, String>);
+
+impl rpc::file_loader::Rpc for ChangedFiles {
+    fn file_exists(&self, path: PathBuf) -> RpcResult<bool> {
+        log::debug!(">>>> Server: file_exists({:?})", path);
+        // Copied from syntax::source_map::RealFileLoader
+        Ok(fs::metadata(path).is_ok())
+    }
+    fn abs_path(&self, path: PathBuf) -> RpcResult<Option<PathBuf>> {
+        log::debug!(">>>> Server: abs_path({:?})", path);
+        // Copied from syntax::source_map::RealFileLoader
+        Ok(if path.is_absolute() {
+            Some(path.to_path_buf())
+        } else {
+            env::current_dir().ok().map(|cwd| cwd.join(path))
+        })
+    }
+    fn read_file(&self, path: PathBuf) -> RpcResult<String> {
+        log::debug!(">>>> Server: read_file({:?})", path);
+        if let Some(abs_path) = self.abs_path(path.clone()).ok().and_then(|x| x) {
+            if self.0.contains_key(&abs_path) {
+                return Ok(self.0[&abs_path].clone());
+            }
+        }
+
+        fs::read_to_string(path).map_err(|e| rpc_error(&e.to_string()))
     }
 }

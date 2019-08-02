@@ -264,7 +264,6 @@ fn client_changing_workspace_lib_retains_diagnostics() {
             version: Some(0),
         },
     });
-
     let lib = rls.future_diagnostics("library/src/lib.rs");
     let bin = rls.future_diagnostics("binary/src/main.rs");
     let (lib, bin) = rls.block_on(lib.join(bin)).unwrap();
