@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::ops::DerefMut;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -32,9 +31,11 @@ pub fn start_with_all(
 
 /// Spins up an IPC server in the background. Currently used for inter-process
 /// VFS, which is required for out-of-process rustc compilation.
+#[allow(dead_code)]
 pub fn start(vfs: Arc<Vfs>) -> Result<(PathBuf, CloseHandle), ()> {
-    let mut io = IoHandler::new();
     use rls_ipc::rpc::file_loader::Server as _;
+
+    let mut io = IoHandler::new();
     io.extend_with(ArcVfs(vfs).to_delegate());
 
     self::start_with_handler(io)
@@ -156,7 +157,6 @@ mod callbacks {
         }
     }
 }
-
 
 pub struct ChangedFiles(HashMap<PathBuf, String>);
 
