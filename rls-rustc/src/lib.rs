@@ -15,7 +15,7 @@ use rustc_interface::interface;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::{env, process};
+use std::env;
 
 use futures::future::Future;
 use rls_ipc::rpc::{Crate, Edition};
@@ -65,17 +65,12 @@ pub fn run() -> Result<(), ()> {
         Some(preference) => clippy::adjust_args(args, preference),
         None => args,
     };
-    dbg!(&args);
 
-    let result = rustc_driver::report_ices_to_stderr_if_any(|| {
+    rustc_driver::report_ices_to_stderr_if_any(|| {
         run_compiler(&args, &mut shim_calls, file_loader, None)
     })
-    .and_then(|result| result);
-
-    #[cfg(feature = "ipc")]
-    std::mem::drop(rt);
-
-    process::exit(result.is_err() as i32);
+    .map(|_| ())
+    .map_err(|_| ())
 }
 
 #[derive(Default)]
