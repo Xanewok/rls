@@ -82,75 +82,85 @@ pub(crate) fn rustc(
     let (guard, _) = env_lock.lock();
     let restore_env = Environment::push_with_lock(&local_envs, cwd, guard);
 
-    // let args: Vec<_> = if cfg!(feature = "clippy") && clippy_preference != ClippyPreference::Off {
-    //     // Allow feature gating in the same way as `cargo clippy`
-    //     let mut clippy_args = vec!["--cfg".to_owned(), r#"feature="cargo-clippy""#.to_owned()];
+    let args: Vec<_> = if cfg!(feature = "clippy") && clippy_preference != ClippyPreference::Off {
+        // Allow feature gating in the same way as `cargo clippy`
+        let mut clippy_args = vec!["--cfg".to_owned(), r#"feature="cargo-clippy""#.to_owned()];
 
-    //     if clippy_preference == ClippyPreference::OptIn {
-    //         // `OptIn`: Require explicit `#![warn(clippy::all)]` annotation in each workspace crate
-    //         clippy_args.push("-A".to_owned());
-    //         clippy_args.push("clippy::all".to_owned());
-    //     }
+        if clippy_preference == ClippyPreference::OptIn {
+            // `OptIn`: Require explicit `#![warn(clippy::all)]` annotation in each workspace crate
+            clippy_args.push("-A".to_owned());
+            clippy_args.push("clippy::all".to_owned());
+        }
 
-    //     args.iter().map(ToOwned::to_owned).chain(clippy_args).collect()
-    // } else {
-    //     args.to_owned()
-    // };
+        args.iter().map(ToOwned::to_owned).chain(clippy_args).collect()
+    } else {
+        args.to_owned()
+    };
 
     let mut callbacks = RlsRustcCalls { clippy_preference, ..Default::default() };
     let analysis = Arc::clone(&callbacks.analysis);
     let input_files = Arc::clone(&callbacks.input_files);
 
-    let ipc_server = super::ipc::start_with_all(changed, Arc::clone(&analysis), Arc::clone(&input_files));
-    let (endpoint, handle) = ipc_server.unwrap(); // TODO: Handle unwrap
+    let (result, stderr) = if std::env::var("RLS_OUT_OF_PROCESS").is_ok() {
+        let ipc_server = super::ipc::start_with_all(changed, Arc::clone(&analysis), Arc::clone(&input_files));
+        let (endpoint, handle) = ipc_server.unwrap(); // TODO: Handle unwrap
 
-    // rustc explicitly panics in `run_compiler()` on compile failure, regardless
-    // of whether it encounters an ICE (internal compiler error) or not.
-    // TODO: Change librustc_driver behaviour to distinguish between ICEs and
-    // regular compilation failure with errors?
-    // let args_clone = args.clone();
-    // let result = ::std::panic::catch_unwind(|| {
-    //     rustc_driver::report_ices_to_stderr_if_any(move || {
-    //         // Replace stderr so we catch most errors.
-    //         run_compiler(
-    //             &args_clone,
-    //             &mut callbacks,
-    //             Some(Box::new(ReplacedFileLoader::new(changed))),
-    //             Some(Box::new(BufWriter(buf))),
-    //         )
-    //     })
-    // });
+        // TODO: Copied from rls/src/build/cargo.rs for now
+        let rustc_shim = env::var("RUSTC")
+            .ok()
+            .or_else(|| env::current_exe().ok().and_then(|x| x.to_str().map(String::from)))
+            .expect("Couldn't set executable for RLS rustc shim");
+        let mut cmd = std::process::Command::new(rustc_shim);
+        // In case RLS is set as the rustc shim signal to `main_inner()` to call
+        // `rls_rustc::run()`.
+        cmd.env(crate::RUSTC_SHIM_ENV_VAR_NAME, "1");
+        cmd.env("RLS_IPC_ENDPOINT", &endpoint);
+        cmd.env("RLS_CLIPPY_PREFERENCE", clippy_preference.to_string());
+        cmd.args(args.into_iter().skip(1));
+        cmd.envs(local_envs.clone().into_iter().filter_map(|(k, v)| v.map(|v| (k, v))));
+        log::debug!(">>>> About to spawn a separate rustc");
+        let output = cmd.output().map_err(|_| ());
+        let result = match &output {
+            Ok(output) if output.status.code() == Some(0) => Ok(()),
+            _ => Err(()),
+        };
+        // NOTE: Make sure that we pass JSON error format
+        let stderr = output.map(|out| out.stderr).unwrap_or_default();
 
-    // TODO: Copied from rls/src/build/cargo.rs for now
-    let rustc_shim = env::var("RUSTC")
-        .ok()
-        .or_else(|| env::current_exe().ok().and_then(|x| x.to_str().map(String::from)))
-        .expect("Couldn't set executable for RLS rustc shim");
-    let mut cmd = std::process::Command::new(rustc_shim);
-    // In case RLS is set as the rustc shim signal to `main_inner()` to call
-    // `rls_rustc::run()`.
-    cmd.env(crate::RUSTC_SHIM_ENV_VAR_NAME, "1");
-    cmd.env("RLS_IPC_ENDPOINT", &endpoint);
-    cmd.env("RLS_CLIPPY_PREFERENCE", clippy_preference.to_string());
-    cmd.args(args.into_iter().skip(1));
-    cmd.envs(local_envs.clone().into_iter().filter_map(|(k, v)| v.map(|v| (k, v))));
-    log::debug!(">>>> About to spawn a separate rustc");
-    let output = cmd.output().map_err(|_| ());
-    let result = match &output {
-        Ok(output) if output.status.code() == Some(0) => Ok(()),
-        _ => Err(()),
+        log::debug!(">>>> Before closing IPC server");
+        handle.close();
+        log::debug!(">>>> After closing IPC server");
+        std::mem::drop(callbacks); // Simulate dropping buf so has one owner
+        (result, stderr)
+    } else {
+        // rustc explicitly panics in `run_compiler()` on compile failure, regardless
+        // of whether it encounters an ICE (internal compiler error) or not.
+        // TODO: Change librustc_driver behaviour to distinguish between ICEs and
+        // regular compilation failure with errors?
+        let buf = Arc::default();
+        let buf_clone = Arc::clone(&buf);
+        let args_clone = args.clone();
+        let result = ::std::panic::catch_unwind(|| {
+            rustc_driver::report_ices_to_stderr_if_any(move || {
+                // Replace stderr so we catch most errors.
+                run_compiler(
+                    &args_clone,
+                    &mut callbacks,
+                    Some(Box::new(ReplacedFileLoader::new(changed))),
+                    Some(Box::new(BufWriter(buf_clone))),
+                )
+            })
+        })
+        .map(|_| ())
+        .map_err(|_| ());
+        let stderr = buf.lock().unwrap().clone();
+        (result, stderr)
     };
-    // NOTE: Make sure that we pass JSON error format
-    let stderr = output.map(|out| out.stderr).unwrap_or_default();
-
-    log::debug!(">>>> Before closing IPC server");
-    handle.close();
-    log::debug!(">>>> After closing IPC server");
-    std::mem::drop(callbacks); // Simulate dropping buf so has one owner
 
     // FIXME(#25): given that we are running the compiler directly, there is no need
     // to serialize the error messages -- we should pass them in memory.
     let stderr = String::from_utf8(stderr).unwrap();
+    log::debug!("rustc - stderr: {}", &stderr);
     let stderr_json_msgs: Vec<_> = stderr.lines().map(String::from).collect();
 
     let analysis = analysis.lock().unwrap().clone();
