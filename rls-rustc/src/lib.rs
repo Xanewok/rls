@@ -98,13 +98,11 @@ impl Callbacks for ShimCalls {
         Compilation::Continue
     }
 
-    fn after_analysis(&mut self, compiler: &interface::Compiler) -> Compilation {
+    fn after_expansion(&mut self, compiler: &interface::Compiler) -> Compilation {
         let callbacks = match self.callbacks.as_ref() {
             Some(callbacks) => callbacks,
             None => return Compilation::Continue,
         };
-
-        use rustc_save_analysis::CallbackHandler;
 
         let sess = compiler.session();
         let input = compiler.input();
@@ -137,6 +135,20 @@ impl Callbacks for ShimCalls {
         if let Err(e) = callbacks.input_files(input_files).wait() {
             eprintln!("Can't send input files as part of a compilation callback: {:?}", e);
         }
+
+        Compilation::Continue
+    }
+
+    fn after_analysis(&mut self, compiler: &interface::Compiler) -> Compilation {
+        let callbacks = match self.callbacks.as_ref() {
+            Some(callbacks) => callbacks,
+            None => return Compilation::Continue,
+        };
+
+        use rustc_save_analysis::CallbackHandler;
+
+        let input = compiler.input();
+        let crate_name = compiler.crate_name().unwrap().peek().clone();
 
         // Guaranteed to not be dropped yet in the pipeline thanks to the
         // `config.opts.debugging_opts.save_analysis` value being set to `true`.
