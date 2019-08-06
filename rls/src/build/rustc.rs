@@ -69,12 +69,12 @@ pub(crate) fn rustc(
 
     let changed = vfs.get_cached_files();
 
-    let mut local_envs = envs.clone();
+    let mut envs = envs.clone();
 
     let clippy_preference = {
         let config = rls_config.lock().unwrap();
         if config.clear_env_rust_log {
-            local_envs.insert(String::from("RUST_LOG"), None);
+            envs.insert(String::from("RUST_LOG"), None);
         }
 
         config.clippy_preference
@@ -89,15 +89,16 @@ pub(crate) fn rustc(
         "RLS_OUT_OF_PROCESS",
     ) {
         #[cfg(feature = "ipc")]
-        Ok(..) => run_out_of_process(changed, &args, &local_envs, clippy_preference),
+        Ok(..) => run_out_of_process(changed.clone(), &args, &envs, clippy_preference)
+            .unwrap_or_else(|_| {
+                run_in_process(changed, &args, clippy_preference, lock_environment(&envs, cwd))
+            }),
         #[cfg(not(feature = "ipc"))]
         Ok(..) => {
-            log::warn!("Support for out-of-process compilation was not compiled. Re-build with 'ipc' feature enabled");
-            run_in_process(changed, &args, clippy_preference, lock_environment(&local_envs, cwd))
+            log::warn!("Support for out-of-process compilation was not compiled. Rebuild with 'ipc' feature enabled");
+            run_in_process(changed, &args, clippy_preference, lock_environment(&envs, cwd))
         }
-        Err(..) => {
-            run_in_process(changed, &args, clippy_preference, lock_environment(&local_envs, cwd))
-        }
+        Err(..) => run_in_process(changed, &args, clippy_preference, lock_environment(&envs, cwd)),
     };
 
     let stderr = String::from_utf8(stderr).unwrap();
@@ -128,13 +129,12 @@ fn run_out_of_process(
     args: &[String],
     envs: &HashMap<String, Option<OsString>>,
     clippy_preference: ClippyPreference,
-) -> CompilationResult {
+) -> Result<CompilationResult, ()> {
     let analysis = Arc::default();
     let input_files = Arc::default();
 
     let ipc_server =
-        super::ipc::start_with_all(changed, Arc::clone(&analysis), Arc::clone(&input_files));
-    let ipc_server = ipc_server.unwrap(); // TODO: Handle unwrap
+        super::ipc::start_with_all(changed, Arc::clone(&analysis), Arc::clone(&input_files))?;
 
     // Compiling out of process is only supported by our own shim
     let rustc_shim = env::current_exe()
@@ -143,13 +143,11 @@ fn run_out_of_process(
         .expect("Couldn't set executable for RLS rustc shim");
 
     let output = Command::new(rustc_shim)
-        // In case RLS is set as the rustc shim signal to `main_inner()` to call
-        // `rls_rustc::run()`.
         .env(crate::RUSTC_SHIM_ENV_VAR_NAME, "1")
         .env("RLS_IPC_ENDPOINT", ipc_server.endpoint())
         .env("RLS_CLIPPY_PREFERENCE", clippy_preference.to_string())
         .args(args.iter().skip(1))
-        .envs(envs.clone().into_iter().filter_map(|(k, v)| v.map(|v| (k, v))))
+        .envs(envs.iter().filter_map(|(k, v)| v.as_ref().map(|v| (k, v))))
         .output()
         .map_err(|_| ());
 
@@ -166,7 +164,7 @@ fn run_out_of_process(
     let analysis = unwrap_shared(analysis, "Other ref dropped by closed IPC server");
     // FIXME(#25): given that we are running the compiler directly, there is no need
     // to serialize the error messages -- we should pass them in memory.
-    CompilationResult { result, stderr, analysis, input_files }
+    Ok(CompilationResult { result, stderr, analysis, input_files })
 }
 
 fn run_in_process(
