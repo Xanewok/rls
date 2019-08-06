@@ -14,12 +14,13 @@ use rustc_driver::{run_compiler, Callbacks, Compilation};
 use rustc_interface::interface;
 
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
 use std::env;
+use std::path::{Path, PathBuf};
 
 use futures::future::Future;
 use rls_ipc::rpc::{Crate, Edition};
 
+#[cfg(feature = "clippy")]
 mod clippy;
 #[cfg(feature = "ipc")]
 mod ipc;
@@ -27,7 +28,7 @@ mod ipc;
 pub fn run() -> Result<(), ()> {
     #[cfg(feature = "ipc")]
     let mut rt = tokio::runtime::Runtime::new().unwrap();
-
+    #[cfg(feature = "clippy")]
     let clippy_preference = clippy::preference();
 
     #[cfg(feature = "ipc")]
@@ -41,7 +42,14 @@ pub fn run() -> Result<(), ()> {
                 rt.block_on(connection).expect("Couldn't connect to IPC endpoint");
             let (file_loader, callbacks) = client.split();
 
-            (ShimCalls { callbacks: Some(callbacks), clippy_preference }, file_loader.into_boxed())
+            (
+                ShimCalls {
+                    callbacks: Some(callbacks),
+                    #[cfg(feature = "clippy")]
+                    clippy_preference,
+                },
+                file_loader.into_boxed(),
+            )
         }
         None => (ShimCalls::default(), None),
     };
@@ -77,6 +85,7 @@ pub fn run() -> Result<(), ()> {
 struct ShimCalls {
     #[cfg(feature = "ipc")]
     callbacks: Option<ipc::IpcCallbacks>,
+    #[cfg(feature = "clippy")]
     clippy_preference: Option<clippy::ClippyPreference>,
 }
 
