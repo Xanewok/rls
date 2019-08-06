@@ -27,6 +27,7 @@ use std::collections::{HashMap, HashSet};
 use std::env;
 use std::ffi::OsString;
 use std::io;
+use std::mem;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
@@ -79,22 +80,9 @@ pub(crate) fn rustc(
         config.clippy_preference
     };
 
-    let (guard, _) = env_lock.lock();
-    let restore_env = Environment::push_with_lock(&local_envs, cwd, guard);
-
-    let args: Vec<_> = if cfg!(feature = "clippy") && clippy_preference != ClippyPreference::Off {
-        // Allow feature gating in the same way as `cargo clippy`
-        let mut clippy_args = vec!["--cfg".to_owned(), r#"feature="cargo-clippy""#.to_owned()];
-
-        if clippy_preference == ClippyPreference::OptIn {
-            // `OptIn`: Require explicit `#![warn(clippy::all)]` annotation in each workspace crate
-            clippy_args.push("-A".to_owned());
-            clippy_args.push("clippy::all".to_owned());
-        }
-
-        args.iter().map(ToOwned::to_owned).chain(clippy_args).collect()
-    } else {
-        args.to_owned()
+    let lock_environment = |envs, cwd| {
+        let (guard, _) = env_lock.lock();
+        Environment::push_with_lock(envs, cwd, guard)
     };
 
     let CompilationResult { result, stderr, analysis, input_files } = match std::env::var(
@@ -105,9 +93,9 @@ pub(crate) fn rustc(
         #[cfg(not(feature = "ipc"))]
         Ok(..) => {
             log::warn!("Support for out-of-process compilation was not compiled. Re-build with 'ipc' feature enabled");
-            run_in_process(changed, &args, clippy_preference)
+            run_in_process(changed, &args, clippy_preference, lock_environment(&local_envs, cwd))
         }
-        Err(..) => run_in_process(changed, &args, clippy_preference),
+        Err(..) => run_in_process(changed, &args, clippy_preference, lock_environment(&local_envs, cwd)),
     };
 
     let stderr = String::from_utf8(stderr).unwrap();
@@ -117,7 +105,7 @@ pub(crate) fn rustc(
     let analysis = analysis.map(|analysis| vec![analysis]).unwrap_or_else(Vec::new);
     log::debug!("rustc: analysis read successfully?: {}", !analysis.is_empty());
 
-    let cwd = cwd.unwrap_or_else(|| restore_env.get_old_cwd()).to_path_buf();
+    let cwd = cwd.unwrap_or_else(|| Path::new(".")).to_path_buf();
 
     BuildResult::Success(cwd, stderr_json_msgs, analysis, input_files, result.is_ok())
 }
@@ -183,17 +171,33 @@ fn run_in_process(
     changed: HashMap<PathBuf, String>,
     args: &[String],
     clippy_preference: ClippyPreference,
+    environment_lock: Environment<'_>,
 ) -> CompilationResult {
     let mut callbacks = RlsRustcCalls { clippy_preference, ..Default::default() };
     let input_files = Arc::clone(&callbacks.input_files);
     let analysis = Arc::clone(&callbacks.analysis);
+
+    let args: Vec<_> = if cfg!(feature = "clippy") && clippy_preference != ClippyPreference::Off {
+        // Allow feature gating in the same way as `cargo clippy`
+        let mut clippy_args = vec!["--cfg".to_owned(), r#"feature="cargo-clippy""#.to_owned()];
+
+        if clippy_preference == ClippyPreference::OptIn {
+            // `OptIn`: Require explicit `#![warn(clippy::all)]` annotation in each workspace crate
+            clippy_args.push("-A".to_owned());
+            clippy_args.push("clippy::all".to_owned());
+        }
+
+        args.iter().map(ToOwned::to_owned).chain(clippy_args).collect()
+    } else {
+        args.to_owned()
+    };
 
     // rustc explicitly panics in `run_compiler()` on compile failure, regardless
     // of whether it encounters an ICE (internal compiler error) or not.
     // TODO: Change librustc_driver behaviour to distinguish between ICEs and
     // regular compilation failure with errors?
     let stderr = Arc::default();
-    let result = ::std::panic::catch_unwind({
+    let result = std::panic::catch_unwind({
         let stderr = Arc::clone(&stderr);
         || {
             rustc_driver::report_ices_to_stderr_if_any(move || {
@@ -209,6 +213,8 @@ fn run_in_process(
     })
     .map(|_| ())
     .map_err(|_| ());
+    // Explicitly drop the global environment lock
+    mem::drop(environment_lock);
 
     let stderr = unwrap_shared(stderr, "Other ref dropped by scoped compilation");
     let input_files = unwrap_shared(input_files, "Other ref dropped by scoped compilation");
@@ -309,7 +315,7 @@ impl rustc_driver::Callbacks for RlsRustcCalls {
                 CallbackHandler {
                     callback: &mut |a| {
                         let mut analysis = self.analysis.lock().unwrap();
-                        let a = unsafe { ::std::mem::transmute(a.clone()) };
+                        let a = unsafe { mem::transmute(a.clone()) };
                         *analysis = Some(a);
                     },
                 },
