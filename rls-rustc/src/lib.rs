@@ -8,17 +8,16 @@ extern crate rustc_plugin;
 extern crate rustc_save_analysis;
 extern crate syntax;
 
-use rustc::session::config::{ErrorOutputType, Input};
-use rustc::session::{early_error, Session};
-use rustc_driver::{run_compiler, Callbacks, Compilation};
+use rustc::session::config::ErrorOutputType;
+use rustc::session::early_error;
+#[cfg(any(feature = "clippy", feature = "ipc"))]
+use rustc_driver::Compilation;
+use rustc_driver::{run_compiler, Callbacks};
 use rustc_interface::interface;
 
-use std::collections::{HashMap, HashSet};
 use std::env;
+#[allow(unused_imports)]
 use std::path::{Path, PathBuf};
-
-use futures::future::Future;
-use rls_ipc::rpc::{Crate, Edition};
 
 #[cfg(feature = "clippy")]
 mod clippy;
@@ -107,7 +106,14 @@ impl Callbacks for ShimCalls {
         Compilation::Continue
     }
 
+    #[cfg(feature = "ipc")]
     fn after_expansion(&mut self, compiler: &interface::Compiler) -> Compilation {
+        use rustc::session::config::Input;
+
+        use futures::future::Future;
+        use rls_ipc::rpc::{Crate, Edition};
+        use std::collections::{HashMap, HashSet};
+
         let callbacks = match self.callbacks.as_ref() {
             Some(callbacks) => callbacks,
             None => return Compilation::Continue,
@@ -147,7 +153,10 @@ impl Callbacks for ShimCalls {
         Compilation::Continue
     }
 
+    #[cfg(feature = "ipc")]
     fn after_analysis(&mut self, compiler: &interface::Compiler) -> Compilation {
+        use futures::future::Future;
+
         let callbacks = match self.callbacks.as_ref() {
             Some(callbacks) => callbacks,
             None => return Compilation::Continue,
@@ -200,7 +209,8 @@ impl Callbacks for ShimCalls {
     }
 }
 
-fn fetch_input_files(sess: &Session) -> Vec<PathBuf> {
+#[cfg(feature = "ipc")]
+fn fetch_input_files(sess: &rustc::session::Session) -> Vec<PathBuf> {
     let cwd = &sess.working_dir.0;
 
     sess.source_map()
@@ -213,7 +223,8 @@ fn fetch_input_files(sess: &Session) -> Vec<PathBuf> {
         .collect()
 }
 
-pub fn src_path(cwd: Option<&Path>, path: impl AsRef<Path>) -> Option<PathBuf> {
+#[cfg(feature = "ipc")]
+fn src_path(cwd: Option<&Path>, path: impl AsRef<Path>) -> Option<PathBuf> {
     let path = path.as_ref();
 
     Some(match (cwd, path.is_absolute()) {
