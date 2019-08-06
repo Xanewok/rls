@@ -111,12 +111,10 @@ struct ArcVfs(Arc<Vfs>);
 
 impl rpc::file_loader::Rpc for ArcVfs {
     fn file_exists(&self, path: PathBuf) -> RpcResult<bool> {
-        log::debug!(">>>> Server: file_exists({:?})", path);
         // Copied from syntax::source_map::RealFileLoader
         Ok(fs::metadata(path).is_ok())
     }
     fn abs_path(&self, path: PathBuf) -> RpcResult<Option<PathBuf>> {
-        log::debug!(">>>> Server: abs_path({:?})", path);
         // Copied from syntax::source_map::RealFileLoader
         Ok(if path.is_absolute() {
             Some(path.to_path_buf())
@@ -125,7 +123,6 @@ impl rpc::file_loader::Rpc for ArcVfs {
         })
     }
     fn read_file(&self, path: PathBuf) -> RpcResult<String> {
-        log::debug!(">>>> Server: read_file({:?})", path);
         self.0.load_file(&path).map_err(|e| rpc_error(&e.to_string())).and_then(|contents| {
             match contents {
                 FileContents::Text(text) => Ok(text),
@@ -162,13 +159,11 @@ mod callbacks {
 
     impl rpc::callbacks::Rpc for CallbackHandler {
         fn complete_analysis(&self, analysis: rls_data::Analysis) -> RpcResult<()> {
-            log::debug!(">>>> Server: complete_analysis({:?})", analysis.compilation.as_ref().map(|comp| comp.output.clone()));
             *self.analysis.lock().unwrap() = Some(analysis);
             Ok(())
         }
 
         fn input_files(&self, input_files: HashMap<PathBuf, HashSet<rls_ipc::rpc::Crate>>) -> RpcResult<()> {
-            log::debug!(">>>> Server: input_files({:?})", &input_files);
             let mut current_files = self.input_files.lock().unwrap();
             for (file, crates) in input_files {
                 current_files.entry(file).or_default().extend(crates.into_iter().map(From::from));
@@ -182,12 +177,10 @@ pub struct ChangedFiles(HashMap<PathBuf, String>);
 
 impl rpc::file_loader::Rpc for ChangedFiles {
     fn file_exists(&self, path: PathBuf) -> RpcResult<bool> {
-        log::debug!(">>>> Server: file_exists({:?})", path);
         // Copied from syntax::source_map::RealFileLoader
         Ok(fs::metadata(path).is_ok())
     }
     fn abs_path(&self, path: PathBuf) -> RpcResult<Option<PathBuf>> {
-        log::debug!(">>>> Server: abs_path({:?})", path);
         // Copied from syntax::source_map::RealFileLoader
         Ok(if path.is_absolute() {
             Some(path.to_path_buf())
@@ -196,7 +189,6 @@ impl rpc::file_loader::Rpc for ChangedFiles {
         })
     }
     fn read_file(&self, path: PathBuf) -> RpcResult<String> {
-        log::debug!(">>>> Server: read_file({:?})", path);
         if let Some(abs_path) = self.abs_path(path.clone()).ok().and_then(|x| x) {
             if self.0.contains_key(&abs_path) {
                 return Ok(self.0[&abs_path].clone());

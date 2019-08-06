@@ -140,9 +140,8 @@ impl Callbacks for ShimCalls {
             input_files.entry(file).or_default().insert(krate.clone());
         }
 
-        eprintln!(">>> Client: Call input_files");
         if let Err(e) = callbacks.input_files(input_files).wait() {
-            eprintln!("Can't send input files as part of a compilation callback: {:?}", e);
+            log::error!("Can't send input files as part of a compilation callback: {:?}", e);
         }
 
         Compilation::Continue
@@ -185,10 +184,9 @@ impl Callbacks for ShimCalls {
                 None,
                 CallbackHandler {
                     callback: &mut |a| {
-                        eprintln!(">>> Client: Entered CallbackHandler::callback");
                         let analysis = unsafe { ::std::mem::transmute(a.clone()) };
                         if let Err(e) = callbacks.complete_analysis(analysis).wait() {
-                            eprintln!(
+                            log::error!(
                                 "Can't send analysis as part of a compilation callback: {:?}",
                                 e
                             );
