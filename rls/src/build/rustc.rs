@@ -95,7 +95,9 @@ pub(crate) fn rustc(
             log::warn!("Support for out-of-process compilation was not compiled. Re-build with 'ipc' feature enabled");
             run_in_process(changed, &args, clippy_preference, lock_environment(&local_envs, cwd))
         }
-        Err(..) => run_in_process(changed, &args, clippy_preference, lock_environment(&local_envs, cwd)),
+        Err(..) => {
+            run_in_process(changed, &args, clippy_preference, lock_environment(&local_envs, cwd))
+        }
     };
 
     let stderr = String::from_utf8(stderr).unwrap();
@@ -148,7 +150,8 @@ fn run_out_of_process(
         .env("RLS_CLIPPY_PREFERENCE", clippy_preference.to_string())
         .args(args.iter().skip(1))
         .envs(envs.clone().into_iter().filter_map(|(k, v)| v.map(|v| (k, v))))
-        .output().map_err(|_| ());
+        .output()
+        .map_err(|_| ());
 
     let result = match &output {
         Ok(output) if output.status.code() == Some(0) => Ok(()),

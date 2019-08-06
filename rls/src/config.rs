@@ -364,7 +364,8 @@ impl ToString for ClippyPreference {
             ClippyPreference::Off => "off",
             ClippyPreference::OptIn => "optin",
             ClippyPreference::On => "on",
-        }.to_string()
+        }
+        .to_string()
     }
 }
 
