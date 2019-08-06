@@ -69,10 +69,7 @@ pub fn start_with_handler(io: IoHandler) -> Result<Server, ()> {
         let endpoint_path = endpoint_path.clone();
         move || {
             log::trace!("Attempting to spin up IPC server at {}", endpoint_path);
-            let runtime = tokio::runtime::Builder::new()
-                .core_threads(1)
-                .build()
-                .unwrap();
+            let runtime = tokio::runtime::Builder::new().core_threads(1).build().unwrap();
             #[allow(deprecated)] // Windows won't work with lazily bound reactor
             let (reactor, executor) = (runtime.reactor(), runtime.executor());
 
@@ -133,10 +130,10 @@ impl rpc::file_loader::Rpc for ArcVfs {
 }
 
 mod callbacks {
+    use super::PathBuf;
+    use super::{rpc, RpcResult};
     use super::{Arc, Mutex};
     use super::{HashMap, HashSet};
-    use super::{PathBuf};
-    use super::{rpc, RpcResult};
     // use crate::build::plan::Crate;
     impl From<rls_ipc::rpc::Crate> for crate::build::plan::Crate {
         fn from(krate: rls_ipc::rpc::Crate) -> Self {
@@ -163,7 +160,10 @@ mod callbacks {
             Ok(())
         }
 
-        fn input_files(&self, input_files: HashMap<PathBuf, HashSet<rls_ipc::rpc::Crate>>) -> RpcResult<()> {
+        fn input_files(
+            &self,
+            input_files: HashMap<PathBuf, HashSet<rls_ipc::rpc::Crate>>,
+        ) -> RpcResult<()> {
             let mut current_files = self.input_files.lock().unwrap();
             for (file, crates) in input_files {
                 current_files.entry(file).or_default().extend(crates.into_iter().map(From::from));

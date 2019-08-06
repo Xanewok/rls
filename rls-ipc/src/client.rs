@@ -3,8 +3,8 @@
 use crate::rpc::callbacks::gen_client::Client as CallbacksClient;
 use crate::rpc::file_loader::gen_client::Client as FileLoaderClient;
 
-pub use jsonrpc_core_client::{RpcChannel, RpcError};
 pub use jsonrpc_core_client::transports::ipc::connect;
+pub use jsonrpc_core_client::{RpcChannel, RpcError};
 
 /// Joint IPC client.
 #[derive(Clone)]
