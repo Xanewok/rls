@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -11,14 +11,34 @@ use rls_vfs::{FileContents, Vfs};
 use crate::build::plan::Crate;
 
 use rls_ipc::rpc::{self, Error, Result as RpcResult};
-use rls_ipc::server::{ServerBuilder, CloseHandle};
+use rls_ipc::server::{CloseHandle, ServerBuilder};
+
+/// An IPC server spawned on a different thread.
+pub struct Server {
+    endpoint: PathBuf,
+    join_handle: std::thread::JoinHandle<()>,
+    close_handle: CloseHandle,
+}
+
+impl Server {
+    /// Returns an endpoint on which the server is listening.
+    pub fn endpoint(&self) -> &Path {
+        &self.endpoint
+    }
+
+    /// Shuts down the IPC server and waits on the thread it was spawned on.
+    pub fn close(self) {
+        self.close_handle.close();
+        let _ = self.join_handle.join();
+    }
+}
 
 /// TODO: Document me
 pub fn start_with_all(
     changed_files: HashMap<PathBuf, String>,
     analysis: Arc<Mutex<Option<rls_data::Analysis>>>,
     input_files: Arc<Mutex<HashMap<PathBuf, HashSet<Crate>>>>,
-) -> Result<(PathBuf, CloseHandle), ()> {
+) -> Result<Server, ()> {
     use rls_ipc::rpc::callbacks::Server as _;
     use rls_ipc::rpc::file_loader::Server as _;
 
@@ -32,7 +52,7 @@ pub fn start_with_all(
 /// Spins up an IPC server in the background. Currently used for inter-process
 /// VFS, which is required for out-of-process rustc compilation.
 #[allow(dead_code)]
-pub fn start(vfs: Arc<Vfs>) -> Result<(PathBuf, CloseHandle), ()> {
+pub fn start(vfs: Arc<Vfs>) -> Result<Server, ()> {
     use rls_ipc::rpc::file_loader::Server as _;
 
     let mut io = IoHandler::new();
@@ -42,10 +62,10 @@ pub fn start(vfs: Arc<Vfs>) -> Result<(PathBuf, CloseHandle), ()> {
 }
 
 /// Spins up an IPC server in the background.
-pub fn start_with_handler(io: IoHandler) -> Result<(PathBuf, CloseHandle), ()> {
+pub fn start_with_handler(io: IoHandler) -> Result<Server, ()> {
     let endpoint_path = gen_endpoint_path();
     let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn({
+    let join_handle = std::thread::spawn({
         let endpoint_path = endpoint_path.clone();
         move || {
             log::trace!("Attempting to spin up IPC server at {}", endpoint_path);
@@ -70,7 +90,7 @@ pub fn start_with_handler(io: IoHandler) -> Result<(PathBuf, CloseHandle), ()> {
     });
 
     rx.recv_timeout(Duration::from_secs(5))
-        .map(|handle| (endpoint_path.into(), handle))
+        .map(|close_handle| Server { endpoint: endpoint_path.into(), join_handle, close_handle })
         .map_err(|_| ())
 }
 
