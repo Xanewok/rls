@@ -23,4 +23,4 @@ rls-ipc = { path = "../rls-ipc", optional = true }
 [features]
 clippy = ["clippy_lints"]
 ipc = ["tokio", "futures", "serde", "rls-data", "rls-ipc/client"]
-default = ["ipc"] # TODO: Remove me
+default = []
