@@ -103,7 +103,7 @@ pub(crate) fn rustc(
 
     let (result, stderr) = if std::env::var("RLS_OUT_OF_PROCESS").is_ok() {
         let ipc_server = super::ipc::start_with_all(changed, Arc::clone(&analysis), Arc::clone(&input_files));
-        let (endpoint, handle) = ipc_server.unwrap(); // TODO: Handle unwrap
+        let ipc_server = ipc_server.unwrap(); // TODO: Handle unwrap
 
         // TODO: Copied from rls/src/build/cargo.rs for now
         let rustc_shim = env::var("RUSTC")
@@ -114,7 +114,7 @@ pub(crate) fn rustc(
         // In case RLS is set as the rustc shim signal to `main_inner()` to call
         // `rls_rustc::run()`.
         cmd.env(crate::RUSTC_SHIM_ENV_VAR_NAME, "1");
-        cmd.env("RLS_IPC_ENDPOINT", &endpoint);
+        cmd.env("RLS_IPC_ENDPOINT", ipc_server.endpoint());
         cmd.env("RLS_CLIPPY_PREFERENCE", clippy_preference.to_string());
         cmd.args(args.into_iter().skip(1));
         cmd.envs(local_envs.clone().into_iter().filter_map(|(k, v)| v.map(|v| (k, v))));
@@ -128,7 +128,7 @@ pub(crate) fn rustc(
         let stderr = output.map(|out| out.stderr).unwrap_or_default();
 
         log::debug!(">>>> Before closing IPC server");
-        handle.close();
+        ipc_server.close();
         log::debug!(">>>> After closing IPC server");
         std::mem::drop(callbacks); // Simulate dropping buf so has one owner
         (result, stderr)
