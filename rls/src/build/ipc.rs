@@ -6,7 +6,6 @@ use std::time::Duration;
 use std::{env, fs};
 
 use jsonrpc_core::{ErrorCode, IoHandler};
-use rls_vfs::{FileContents, Vfs};
 
 use crate::build::plan::Crate;
 
@@ -33,7 +32,8 @@ impl Server {
     }
 }
 
-/// TODO: Document me
+/// Starts an IPC server in the background supporting both VFS requests and data
+/// callbacks used by rustc for the out-of-process compilation.
 pub fn start_with_all(
     changed_files: HashMap<PathBuf, String>,
     analysis: Arc<Mutex<Option<rls_data::Analysis>>>,
@@ -45,18 +45,6 @@ pub fn start_with_all(
     let mut io = IoHandler::new();
     io.extend_with(ChangedFiles(changed_files).to_delegate());
     io.extend_with(callbacks::CallbackHandler { analysis, input_files }.to_delegate());
-
-    self::start_with_handler(io)
-}
-
-/// Spins up an IPC server in the background. Currently used for inter-process
-/// VFS, which is required for out-of-process rustc compilation.
-#[allow(dead_code)]
-pub fn start(vfs: Arc<Vfs>) -> Result<Server, ()> {
-    use rls_ipc::rpc::file_loader::Server as _;
-
-    let mut io = IoHandler::new();
-    io.extend_with(ArcVfs(vfs).to_delegate());
 
     self::start_with_handler(io)
 }
@@ -104,37 +92,12 @@ fn rpc_error(msg: &str) -> Error {
     Error { code: ErrorCode::InternalError, message: msg.to_owned(), data: None }
 }
 
-struct ArcVfs(Arc<Vfs>);
-
-impl rpc::file_loader::Rpc for ArcVfs {
-    fn file_exists(&self, path: PathBuf) -> RpcResult<bool> {
-        // Copied from syntax::source_map::RealFileLoader
-        Ok(fs::metadata(path).is_ok())
-    }
-    fn abs_path(&self, path: PathBuf) -> RpcResult<Option<PathBuf>> {
-        // Copied from syntax::source_map::RealFileLoader
-        Ok(if path.is_absolute() {
-            Some(path.to_path_buf())
-        } else {
-            env::current_dir().ok().map(|cwd| cwd.join(path))
-        })
-    }
-    fn read_file(&self, path: PathBuf) -> RpcResult<String> {
-        self.0.load_file(&path).map_err(|e| rpc_error(&e.to_string())).and_then(|contents| {
-            match contents {
-                FileContents::Text(text) => Ok(text),
-                FileContents::Binary(..) => Err(rpc_error("File is binary")),
-            }
-        })
-    }
-}
-
 mod callbacks {
     use super::PathBuf;
     use super::{rpc, RpcResult};
     use super::{Arc, Mutex};
     use super::{HashMap, HashSet};
-    // use crate::build::plan::Crate;
+
     impl From<rls_ipc::rpc::Crate> for crate::build::plan::Crate {
         fn from(krate: rls_ipc::rpc::Crate) -> Self {
             Self {
