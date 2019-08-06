@@ -49,7 +49,7 @@ use crate::build::plan::{Crate, Edition};
 use crate::build::{BufWriter, BuildResult};
 use crate::config::{ClippyPreference, Config};
 
-// Runs a single instance of Rustc (in-process).
+// Runs a single instance of Rustc.
 pub(crate) fn rustc(
     vfs: &Vfs,
     args: &[String],
@@ -139,16 +139,17 @@ fn run_out_of_process(
         .ok()
         .and_then(|x| x.to_str().map(String::from))
         .expect("Couldn't set executable for RLS rustc shim");
-    let mut cmd = Command::new(rustc_shim);
-    // In case RLS is set as the rustc shim signal to `main_inner()` to call
-    // `rls_rustc::run()`.
-    cmd.env(crate::RUSTC_SHIM_ENV_VAR_NAME, "1");
-    cmd.env("RLS_IPC_ENDPOINT", ipc_server.endpoint());
-    cmd.env("RLS_CLIPPY_PREFERENCE", clippy_preference.to_string());
-    cmd.args(args.iter().skip(1));
-    cmd.envs(envs.clone().into_iter().filter_map(|(k, v)| v.map(|v| (k, v))));
-    log::debug!(">>>> About to spawn a separate rustc");
-    let output = cmd.output().map_err(|_| ());
+
+    let output = Command::new(rustc_shim)
+        // In case RLS is set as the rustc shim signal to `main_inner()` to call
+        // `rls_rustc::run()`.
+        .env(crate::RUSTC_SHIM_ENV_VAR_NAME, "1")
+        .env("RLS_IPC_ENDPOINT", ipc_server.endpoint())
+        .env("RLS_CLIPPY_PREFERENCE", clippy_preference.to_string())
+        .args(args.iter().skip(1))
+        .envs(envs.clone().into_iter().filter_map(|(k, v)| v.map(|v| (k, v))))
+        .output().map_err(|_| ());
+
     let result = match &output {
         Ok(output) if output.status.code() == Some(0) => Ok(()),
         _ => Err(()),
@@ -156,9 +157,7 @@ fn run_out_of_process(
     // NOTE: Make sure that we pass JSON error format
     let stderr = output.map(|out| out.stderr).unwrap_or_default();
 
-    log::debug!(">>>> Before closing IPC server");
     ipc_server.close();
-    log::debug!(">>>> After closing IPC server");
 
     let input_files = unwrap_shared(input_files, "Other ref dropped by closed IPC server");
     let analysis = unwrap_shared(analysis, "Other ref dropped by closed IPC server");

@@ -54,10 +54,6 @@ impl IpcCallbacks {
         &self,
         analysis: rls_data::Analysis,
     ) -> impl Future<Item = (), Error = RpcError> {
-        eprintln!(
-            ">>>> Client: complete_analysis({:?})",
-            analysis.compilation.as_ref().map(|comp| comp.output.clone())
-        );
         self.0.complete_analysis(analysis)
     }
 
@@ -65,7 +61,6 @@ impl IpcCallbacks {
         &self,
         input_files: HashMap<PathBuf, HashSet<rls_ipc::rpc::Crate>>,
     ) -> impl Future<Item = (), Error = RpcError> {
-        eprintln!(">>>> Client: input_files({:?})", &input_files);
         self.0.input_files(input_files)
     }
 }
