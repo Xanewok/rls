@@ -97,18 +97,17 @@ pub(crate) fn rustc(
         args.to_owned()
     };
 
-    let callbacks = RlsRustcCalls { clippy_preference, ..Default::default() };
     let CompilationResult { result, stderr, analysis, input_files } = match std::env::var(
         "RLS_OUT_OF_PROCESS",
     ) {
         #[cfg(feature = "ipc")]
-        Ok(..) => run_out_of_process(changed, &args, &local_envs, callbacks),
+        Ok(..) => run_out_of_process(changed, &args, &local_envs, clippy_preference),
         #[cfg(not(feature = "ipc"))]
         Ok(..) => {
             log::warn!("Support for out-of-process compilation was not compiled. Re-build with 'ipc' feature enabled");
-            run_in_process(changed, &args, callbacks)
+            run_in_process(changed, &args, clippy_preference)
         }
-        Err(..) => run_in_process(changed, &args, callbacks),
+        Err(..) => run_in_process(changed, &args, clippy_preference),
     };
 
     let stderr = String::from_utf8(stderr).unwrap();
@@ -137,10 +136,11 @@ pub struct CompilationResult {
 fn run_out_of_process(
     changed: HashMap<PathBuf, String>,
     args: &[String],
-    local_envs: &HashMap<String, Option<OsString>>,
-    callbacks: RlsRustcCalls,
+    envs: &HashMap<String, Option<OsString>>,
+    clippy_preference: ClippyPreference,
 ) -> CompilationResult {
-    let RlsRustcCalls { input_files, analysis, clippy_preference } = callbacks;
+    let analysis = Arc::default();
+    let input_files = Arc::default();
 
     let ipc_server =
         super::ipc::start_with_all(changed, Arc::clone(&analysis), Arc::clone(&input_files));
@@ -158,7 +158,7 @@ fn run_out_of_process(
     cmd.env("RLS_IPC_ENDPOINT", ipc_server.endpoint());
     cmd.env("RLS_CLIPPY_PREFERENCE", clippy_preference.to_string());
     cmd.args(args.iter().skip(1));
-    cmd.envs(local_envs.clone().into_iter().filter_map(|(k, v)| v.map(|v| (k, v))));
+    cmd.envs(envs.clone().into_iter().filter_map(|(k, v)| v.map(|v| (k, v))));
     log::debug!(">>>> About to spawn a separate rustc");
     let output = cmd.output().map_err(|_| ());
     let result = match &output {
@@ -182,8 +182,9 @@ fn run_out_of_process(
 fn run_in_process(
     changed: HashMap<PathBuf, String>,
     args: &[String],
-    mut callbacks: RlsRustcCalls,
+    clippy_preference: ClippyPreference,
 ) -> CompilationResult {
+    let mut callbacks = RlsRustcCalls { clippy_preference, ..Default::default() };
     let input_files = Arc::clone(&callbacks.input_files);
     let analysis = Arc::clone(&callbacks.analysis);
 
