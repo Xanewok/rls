@@ -1,0 +1,24 @@
+# Sets up a given toolchain or uses the newest Rust master if necessary
+
+steps:
+  - ${{ if not(eq(parameters.rust_version, 'master')) }}:
+    - template: azure-install-rust.yml
+      parameters:
+        rust_version: ${{parameters.rust_version}}
+
+  - ${{ if eq(parameters.rust_version, 'master') }}:
+    - template: azure-install-rust.yml
+      parameters:
+        rust_version: nightly
+    - script: |
+      # git ls-remote https://github.com/rust-lang/rust.git master | awk '{print $1}' >rustc-hash.txt
+      cargo install rustup-toolchain-install-master --debug || echo "rustup-toolchain-install-master already installed"
+      RUSTC_HASH=$(git ls-remote https://github.com/rust-lang/rust.git master | awk '{print $1}')
+      rustup-toolchain-install-master -f -n master "$RUSTC_HASH"
+      rustup default master
+
+  - displayName: Query rust and cargo versions
+    script: |
+        rustup toolchain list
+        rustc -Vv
+        cargo -V

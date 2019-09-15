@@ -13,7 +13,7 @@ jobs:
   pool:
     vmImage: $(imageName)
   steps:
-    - template: azure-install-rust.yml
+    - template: azure-setup-toolchain.yml
       parameters:
         rust_version: ${{ parameters.rust }}
     - script: |

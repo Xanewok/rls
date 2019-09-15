@@ -40,3 +40,13 @@ jobs:
       ".":
         - test_name: test_tooltip_std
           args: --ignored
+
+# ... and check that build passes with Rust master
+- template: ci/azure-test.yml
+  parameters:
+    rust: master
+    name: tests
+    crates:
+      ".":
+        - test_name: test_tooltip_std
+          args: --ignored
